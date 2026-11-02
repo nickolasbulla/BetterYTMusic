@@ -153,6 +153,26 @@ enum YTMusicAPI {
         }
     }
 
+    // MARK: - Busca
+
+    /// Busca só entre as músicas (faixas de áudio do YouTube Music), sem clipes.
+    static func searchSongs(_ query: String) async throws -> [RemoteTrack] {
+        // params = filtro "Músicas"
+        let r = try await post("search", client: music,
+                               body: ["query": query, "params": "EgWKAQIIAWoMEA4QChADEAQQCRAF"])
+        return parseItems(r).map { t in
+            // Na busca a 2ª coluna vem como "Artista • Álbum • 3:21".
+            var t = t
+            let parts = t.artist.components(separatedBy: " • ")
+            if parts.count >= 2 {
+                t.artist = parts[0]
+                t.album = parts.count >= 3 ? parts[1] : ""
+                t.duration = parseDuration(parts[parts.count - 1])
+            }
+            return t
+        }
+    }
+
     /// "3:45" / "1:02:03" → segundos.
     private static func parseDuration(_ text: String) -> Double? {
         let parts = text.split(separator: ":").compactMap { Double($0) }

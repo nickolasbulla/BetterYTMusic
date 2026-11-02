@@ -8,6 +8,15 @@ struct PendingTrack: Codable, Hashable {
     var track: RemoteTrack
 }
 
+/// Outra versão (faixa de áudio do YouTube Music) de uma música que o YouTube não liberou,
+/// esperando o usuário confirmar.
+struct Substitute: Identifiable, Hashable {
+    var original: RemoteTrack
+    var candidate: RemoteTrack
+    var id: String { original.videoId }
+    var key: String { original.videoId + ">" + candidate.videoId }
+}
+
 /// Estado salvo em Application Support/sync.json.
 private struct SyncState: Codable {
     var sources: [Source] = []
@@ -16,6 +25,7 @@ private struct SyncState: Codable {
     var downloaded: [String] = []           // videoIds baixados pela sincronização
     var artworkVersion = 0                  // 2 = capas quadradas
     var pending: [PendingTrack] = []
+    var declinedSubstitutes: [String] = []  // Substitute.key recusados: não pergunta de novo
 
     init() {}
 
@@ -29,6 +39,7 @@ private struct SyncState: Codable {
         downloaded = try c.decodeIfPresent([String].self, forKey: .downloaded) ?? []
         artworkVersion = try c.decodeIfPresent(Int.self, forKey: .artworkVersion) ?? 0
         pending = try c.decodeIfPresent([PendingTrack].self, forKey: .pending) ?? []
+        declinedSubstitutes = try c.decodeIfPresent([String].self, forKey: .declinedSubstitutes) ?? []
     }
 }
 
@@ -40,6 +51,7 @@ final class Syncer: ObservableObject {
     @Published private(set) var isSyncing = false
     @Published private(set) var status: String?
     @Published private(set) var errors: [String] = []      // erros do último Atualizar
+    @Published private(set) var substitutes: [Substitute] = []
     @Published private(set) var pending: [PendingTrack] = []
     @Published private(set) var adding: Set<String> = []    // videoIds sendo baixados pelo "+"
 
@@ -96,6 +108,60 @@ final class Syncer: ObservableObject {
         }
     }
 
+    // MARK: - Outra versão de músicas restritas
+
+    /// Procura a mesma música entre as faixas de áudio do YouTube Music (costumam não ter
+    /// restrição de idade, ao contrário do clipe) e confere se essa o YouTube libera.
+    private func findSubstitute(for track: RemoteTrack) async -> Substitute? {
+        guard let results = try? await YTMusicAPI.searchSongs("\(track.title) \(track.artist)") else { return nil }
+        let title = Self.normalized(track.title)
+        let options = results.filter { c in
+            c.videoId != track.videoId
+                && !state.declinedSubstitutes.contains(Substitute(original: track, candidate: c).key)
+        }
+        // Primeiro as de título parecido (o título do clipe costuma trazer artistas e "(Clipe Oficial)").
+        let sameTitle = { (c: RemoteTrack) in
+            let t = Self.normalized(c.title)
+            return !t.isEmpty && (title.contains(t) || t.contains(title))
+        }
+        let ranked = options.filter(sameTitle) + options.filter { !sameTitle($0) }
+        for c in ranked.prefix(3) {
+            if (try? await Downloader.audioURL(videoId: c.videoId)) != nil {
+                return Substitute(original: track, candidate: c)
+            }
+        }
+        return nil
+    }
+
+    private static func normalized(_ s: String) -> String {
+        s.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: nil)
+            .filter { $0.isLetter || $0.isNumber || $0 == " " }
+            .split(separator: " ").joined(separator: " ")
+    }
+
+    /// Baixa o áudio da outra versão, mas grava como a original (nome, capa e lugar na playlist).
+    func acceptSubstitute(_ s: Substitute, library: Library) async {
+        substitutes.removeAll { $0.id == s.id }
+        let dest = Library.folder.appendingPathComponent(Self.fileName(for: s.original.videoId))
+        adding.insert(s.original.videoId)
+        defer { adding.remove(s.original.videoId) }
+        do {
+            try await Downloader.download(s.original, audioFrom: s.candidate.videoId, to: dest)
+            if !state.downloaded.contains(s.original.videoId) { state.downloaded.append(s.original.videoId) }
+            save()
+            await library.add(dest)
+            errors.removeAll { $0.hasPrefix(s.original.title + ":") }
+        } catch {
+            status = "\(s.original.title): \(error.localizedDescription)"
+        }
+    }
+
+    func declineSubstitute(_ s: Substitute) {
+        substitutes.removeAll { $0.id == s.id }
+        state.declinedSubstitutes.append(s.key)
+        save()
+    }
+
     func discardPending(_ videoID: String, from playlistID: String, library: Library) {
         state.pending.removeAll { $0.playlistId == playlistID && $0.track.videoId == videoID }
         pending = state.pending
@@ -148,6 +214,7 @@ final class Syncer: ObservableObject {
 
         var errors: [String] = []
         self.errors = []
+        substitutes = []
 
         // 1. Playlists
         status = "Lendo playlists…"
@@ -221,6 +288,14 @@ final class Syncer: ObservableObject {
                 save()
                 await library.add(dest)
                 done += 1
+            } catch DownloadError.noStreams {
+                var message = "\(track.title): \(DownloadError.noStreams.localizedDescription)"
+                status = "Procurando outra versão de \(track.title)…"
+                if let s = await findSubstitute(for: track) {
+                    substitutes.append(s)
+                    message += " (achamos outra versão)"
+                }
+                errors.append(message)
             } catch {
                 errors.append("\(track.title): \(error.localizedDescription)")
             }

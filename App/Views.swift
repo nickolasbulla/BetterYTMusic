@@ -6,6 +6,8 @@ import UniformTypeIdentifiers
 struct PlaylistsView: View {
     @EnvironmentObject var syncer: Syncer
     @EnvironmentObject var library: Library
+    @EnvironmentObject var player: Player
+    @EnvironmentObject var suggester: Suggester
     @State private var addingLink = false
     @State private var linkText = ""
     @State private var pendingRemoval: RemotePlaylist?
@@ -115,8 +117,81 @@ struct PlaylistsView: View {
             } message: {
                 Text("Link de uma playlist ou do seu perfil (@nome).")
             }
+            // Uma de cada vez, depois que o Atualizar termina. Só fecha por "Usar esta" ou "Não".
+            .sheet(item: Binding(get: { syncer.isSyncing ? nil : syncer.substitutes.first },
+                                 set: { _ in })) { s in
+                SubstituteSheet(substitute: s, remaining: syncer.substitutes.count)
+                    .environmentObject(syncer)
+                    .environmentObject(library)
+                    .environmentObject(player)
+                    .environmentObject(suggester)
+            }
         }
         .miniPlayer()
+    }
+}
+
+/// "Essa não tem, aceita essa?": confirma a troca de uma música restrita por outra versão.
+struct SubstituteSheet: View {
+    @EnvironmentObject var syncer: Syncer
+    @EnvironmentObject var library: Library
+    @EnvironmentObject var player: Player
+    @EnvironmentObject var suggester: Suggester
+    let substitute: Substitute
+    let remaining: Int
+
+    var body: some View {
+        let c = substitute.candidate
+        VStack(spacing: 16) {
+            VStack(spacing: 6) {
+                Text("Outra versão encontrada").font(.headline)
+                Text("O YouTube não libera “\(substitute.original.title)” sem login (provavelmente restrição de idade). Achamos esta versão no YouTube Music:")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+            }
+            RemoteArtwork(url: c.thumbnail.map { $0.replacingOccurrences(of: #"=w\d+-h\d+"#, with: "=w544-h544", options: .regularExpression) },
+                          size: 180)
+            VStack(spacing: 4) {
+                Text(c.title).font(.title3.bold()).multilineTextAlignment(.center)
+                Text(c.artist).foregroundStyle(.secondary)
+                Text([c.album, c.duration.map(formatTime) ?? ""].filter { !$0.isEmpty }.joined(separator: " · "))
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            }
+            .lineLimit(2)
+            Button {
+                Task { await suggester.play(c, with: player) }
+            } label: {
+                if suggester.preparing == c.videoId {
+                    ProgressView()
+                } else {
+                    Label("Ouvir", systemImage: "play.fill")
+                }
+            }
+            .buttonStyle(.bordered)
+            .tint(Theme.accent)
+
+            Spacer(minLength: 0)
+
+            VStack(spacing: 10) {
+                Button {
+                    Task { await syncer.acceptSubstitute(substitute, library: library) }
+                } label: {
+                    Text("Usar esta").frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(Theme.accent)
+                .controlSize(.large)
+                Button("Não, deixar sem baixar") { syncer.declineSubstitute(substitute) }
+                if remaining > 1 {
+                    Text("Mais \(remaining - 1) para confirmar").font(.caption).foregroundStyle(.secondary)
+                }
+            }
+        }
+        .padding(24)
+        .presentationDetents([.large])
+        .interactiveDismissDisabled()
     }
 }
 

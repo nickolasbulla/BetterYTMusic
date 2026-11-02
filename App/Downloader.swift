@@ -40,8 +40,9 @@ enum Downloader {
     }
 
     /// Baixa o áudio AAC (m4a) de um vídeo e grava em `dest` com título, artista, álbum e capa.
-    static func download(_ track: RemoteTrack, to dest: URL) async throws {
-        let url = try await audioURL(videoId: track.videoId)
+    /// `audioFrom`: pega o áudio de outra versão da música (quando a original é restrita).
+    static func download(_ track: RemoteTrack, audioFrom sourceID: String? = nil, to dest: URL) async throws {
+        let url = try await audioURL(videoId: sourceID ?? track.videoId)
 
         let fm = FileManager.default
         let raw = fm.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".m4a")

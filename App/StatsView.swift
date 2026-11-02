@@ -51,6 +51,7 @@ struct StatsView: View {
                                 .foregroundStyle(local == nil ? .secondary : .primary)
                             }
                             .disabled(local == nil)
+                            .listRowBackground(Theme.surface)
                         }
                     }
 
@@ -65,10 +66,12 @@ struct StatsView: View {
                                 Spacer()
                                 Text(formatDuration(artist.seconds)).font(.subheadline).foregroundStyle(.secondary)
                             }
+                            .listRowBackground(Theme.surface)
                         }
                     }
                 }
             }
+            .themedBackground()
             .miniPlayerSpacing()
             .overlay {
                 if top.isEmpty {
@@ -113,6 +116,6 @@ private struct StatTile: View {
         }
         .frame(maxWidth: .infinity)
         .padding(.vertical, 14)
-        .background(Color.white.opacity(0.06), in: RoundedRectangle(cornerRadius: 14))
+        .background(Theme.surface, in: RoundedRectangle(cornerRadius: 14))
     }
 }

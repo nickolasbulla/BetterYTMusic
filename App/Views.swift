@@ -24,6 +24,7 @@ struct PlaylistsView: View {
                             if syncer.isSyncing { ProgressView() }
                             Text(status).font(.footnote).foregroundStyle(.secondary)
                         }
+                        .listRowBackground(Theme.surface)
                     }
                 }
                 Section {
@@ -39,9 +40,11 @@ struct PlaylistsView: View {
                                 Label("Remover playlist", systemImage: "trash")
                             }
                         }
+                        .listRowBackground(Theme.surface)
                     }
                 }
             }
+            .themedBackground()
             .miniPlayerSpacing()
             .searchable(text: $query, prompt: "Buscar playlists")
             .confirmationDialog(
@@ -134,27 +137,31 @@ struct PlaylistDetailView: View {
             }
             List(Array(visible.enumerated()), id: \.offset) { item in
                 let remote = item.element
-                if let local = library.track(videoID: remote.videoId) {
-                    Button {
-                        player.play(playable, startAt: playable.firstIndex(of: local) ?? 0)
-                    } label: {
-                        TrackRow(track: local, isCurrent: player.current == local)
-                    }
-                } else {
-                    // Ainda não baixada.
-                    HStack(spacing: 12) {
-                        Artwork(image: nil, size: 48)
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(remote.title).lineLimit(1)
-                            Text(remote.artist).font(.subheadline).lineLimit(1)
+                Group {
+                    if let local = library.track(videoID: remote.videoId) {
+                        Button {
+                            player.play(playable, startAt: playable.firstIndex(of: local) ?? 0)
+                        } label: {
+                            TrackRow(track: local, isCurrent: player.current == local)
                         }
-                        Spacer()
-                        Image(systemName: "icloud.and.arrow.down")
+                    } else {
+                        // Ainda não baixada.
+                        HStack(spacing: 12) {
+                            Artwork(image: nil, size: 48)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(remote.title).lineLimit(1)
+                                Text(remote.artist).font(.subheadline).lineLimit(1)
+                            }
+                            Spacer()
+                            Image(systemName: "icloud.and.arrow.down")
+                        }
+                        .foregroundStyle(.secondary)
                     }
-                    .foregroundStyle(.secondary)
                 }
+                .listRowBackground(Theme.background)
             }
             .listStyle(.plain)
+            .themedBackground()
             .miniPlayerSpacing()
             .searchable(text: $query, prompt: "Buscar nesta playlist")
             .navigationTitle(playlist.title)
@@ -203,6 +210,7 @@ struct LibraryView: View {
                     trackList
                 }
             }
+            .themedBackground()
             .navigationTitle("Músicas")
             .toolbar {
                 ToolbarItem(placement: .primaryAction) {
@@ -234,9 +242,11 @@ struct LibraryView: View {
                         Label("Apagar música", systemImage: "trash")
                     }
                 }
+                .listRowBackground(Theme.background)
             }
         }
         .listStyle(.plain)
+        .themedBackground()
         .miniPlayerSpacing()
         .searchable(text: $query, prompt: "Buscar músicas, artistas, álbuns")
         .refreshable { await library.reload() }

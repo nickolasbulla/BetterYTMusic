@@ -1,44 +1,40 @@
 # BetterYTMusic
 
-Interface pessoal para o YouTube Music no iPhone: um app SwiftUI com WKWebView que abre `music.youtube.com`.
+Player de música pessoal para o iPhone, feito para funcionar **offline**, com interface própria.
+
+- **Etapa 1 (atual):** biblioteca local + player nativo (segundo plano, tela bloqueada, controles na tela de bloqueio).
+- **Etapa 2 (próxima):** botão "Atualizar playlists" que sincroniza playlists públicas/não listadas do YouTube Music (sem login) e baixa as músicas para ouvir offline.
 
 ## Estrutura
 
 | Caminho | O que é |
 |---|---|
-| `App/BetterYTMusicApp.swift` | Entrada do app + AVAudioSession em modo `playback` |
-| `App/MusicWebView.swift` | WKWebView, user agent, bloqueio de redirecionamento para o app oficial, injeção |
-| `Inject/custom.css` | Seu CSS (injetado no início da página) |
-| `Inject/custom.js` | Seu JavaScript (injetado quando o documento termina de carregar) |
+| `App/BetterYTMusicApp.swift` | Entrada do app |
+| `App/Library.swift` | Biblioteca: arquivos em `Documents/Music`, leitura de título/artista/capa |
+| `App/Player.swift` | AVPlayer, AVAudioSession `playback`, tela de bloqueio e controles remotos |
+| `App/Views.swift` | Telas (lista, mini player, "tocando agora") |
 | `project.yml` | Definição do projeto (XcodeGen). Bundle ID fixo: `com.marcao.betterytmusic` |
 | `.github/workflows/build.yml` | Compila no macOS, gera `.ipa` sem assinatura e publica num Release |
 
-## Compilar (sem Mac)
+## Build e instalação
 
-1. Crie um repositório no GitHub (público é mais simples: o Safari baixa o asset sem precisar de login).
-2. Envie este código para a branch `main`:
-   ```
-   git init -b main
-   git add .
-   git commit -m "Protótipo"
-   git remote add origin https://github.com/SEU_USUARIO/BetterYTMusic.git
-   git push -u origin main
-   ```
-3. Em **Actions**, espere o workflow "Build IPA" terminar (~5 min). Também dá para rodar manualmente com "Run workflow".
-4. No iPhone, abra pelo Safari:
-   `https://github.com/SEU_USUARIO/BetterYTMusic/releases/latest/download/BetterYTMusic.ipa`
-5. No SideStore: aba **My Apps** → **+** → escolha o `.ipa` em Downloads.
+Cada push na `main` gera um novo `.ipa` no GitHub Actions:
 
-Cada push gera um novo build, e ele substitui o anterior porque o bundle ID é o mesmo.
-Com Apple ID gratuito, o app precisa ser renovado no SideStore a cada 7 dias.
+`https://github.com/nickolasbulla/BetterYTMusic/releases/latest/download/BetterYTMusic.ipa`
 
-## Checklist do protótipo
+Instale pelo iloader (ou Sideloadly) no PC. O bundle ID é fixo, então cada versão nova substitui a anterior **sem apagar as músicas**.
 
-- [ ] **Login:** entre na conta Google. Feche o app pelo multitarefa e abra de novo: você deve continuar logado.
-- [ ] **Reprodução:** toque uma música.
-- [ ] **Segundo plano:** vá para a tela inicial e depois bloqueie a tela. A música deve continuar tocando.
+## Colocando músicas no app
 
-### Se algo falhar
+- No app, toque em **+** e escolha arquivos de áudio (mp3, m4a, aac, wav, flac...) no app Arquivos; ou
+- Copie arquivos para **Arquivos → No Meu iPhone → BetterYTM → Music**. Eles aparecem ao voltar para o app (ou puxando a lista para baixo).
 
-- **Google bloqueia o login** ("navegador não seguro"): em `MusicWebView.swift`, troque `webView.customUserAgent = Config.userAgent` por `Config.desktopUserAgent`.
-- **A música pausa ao bloquear a tela:** o script `Scripts.keepAlive` esconde do site que o app foi para segundo plano. Diga o que aconteceu (pausa na hora? depois de alguns segundos?) para ajustarmos.
+Para apagar uma música, deslize para a esquerda na lista.
+
+## Checklist da etapa 1
+
+- [ ] Importar uma ou mais músicas.
+- [ ] Tocar; ver capa, título e artista.
+- [ ] Ir para a tela inicial e bloquear a tela: a música continua.
+- [ ] Na tela de bloqueio / Central de Controle: pausar, avançar, voltar, arrastar a barra de tempo.
+- [ ] Modo avião: tudo continua funcionando.

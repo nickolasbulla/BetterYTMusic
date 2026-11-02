@@ -13,10 +13,6 @@ targets:
     platform: iOS
     sources:
       - path: App
-      # Pasta copiada inteira para dentro do .app (Bundle.main/Inject/...)
-      - path: Inject
-        type: folder
-        buildPhase: resources
     settings:
       base:
         # Fixo: novas versões substituem a anterior no SideStore.
@@ -31,6 +27,9 @@ targets:
         CFBundleVersion: $(CURRENT_PROJECT_VERSION)
         UILaunchScreen: {}
         UIBackgroundModes: [audio]
+        # Mostra Documents do app em Arquivos → No Meu iPhone → BetterYTM
+        UIFileSharingEnabled: true
+        LSSupportsOpeningDocumentsInPlace: true
         UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait]
         ITSAppUsesNonExemptEncryption: false
     scheme: {}

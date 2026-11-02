@@ -5,6 +5,7 @@ struct BetterYTMusicApp: App {
     @StateObject private var library = Library()
     @StateObject private var player = Player()
     @StateObject private var syncer = Syncer()
+    @StateObject private var stats = Stats()
 
     var body: some Scene {
         WindowGroup {
@@ -12,7 +13,9 @@ struct BetterYTMusicApp: App {
                 .environmentObject(library)
                 .environmentObject(player)
                 .environmentObject(syncer)
+                .environmentObject(stats)
                 .preferredColorScheme(.dark)
+                .tint(Theme.accent)
         }
     }
 }
@@ -20,6 +23,8 @@ struct BetterYTMusicApp: App {
 struct RootView: View {
     @EnvironmentObject var library: Library
     @EnvironmentObject var syncer: Syncer
+    @EnvironmentObject var player: Player
+    @EnvironmentObject var stats: Stats
     @Environment(\.scenePhase) private var scenePhase
 
     var body: some View {
@@ -28,10 +33,15 @@ struct RootView: View {
                 .tabItem { Label("Playlists", systemImage: "music.note.list") }
             LibraryView()
                 .tabItem { Label("Músicas", systemImage: "music.note") }
+            StatsView()
+                .tabItem { Label("Estatísticas", systemImage: "chart.bar.fill") }
         }
         .task {
+            player.stats = stats
             library.apply(remote: syncer.allTracks)
             await library.reload()
+            // Reabre na última música, no mesmo ponto, com os mesmos modos (pausado).
+            player.restore { library.track(id: $0) }
         }
         // Arquivos copiados pelo app Arquivos aparecem ao voltar para o app.
         .onChange(of: scenePhase) { phase in

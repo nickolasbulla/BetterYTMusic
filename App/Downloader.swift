@@ -1,5 +1,6 @@
 import Foundation
 import AVFoundation
+import UIKit
 import YouTubeKit
 
 enum DownloadError: LocalizedError {
@@ -34,7 +35,7 @@ enum Downloader {
         defer { try? fm.removeItem(at: raw) }
         try await fetchInChunks(stream.url, to: raw)
 
-        let artwork = await fetchArtwork(track.thumbnail)
+        let artwork = await fetchArtwork(track)
         if let artwork { try? artwork.write(to: Library.artworkURL(for: track.videoId)) }
         try? fm.removeItem(at: dest)
         do {
@@ -75,22 +76,48 @@ enum Downloader {
         }
     }
 
-    /// Baixa só a capa (para músicas baixadas antes de a capa ser guardada à parte).
-    static func saveArtwork(for track: RemoteTrack) async {
-        if let data = await fetchArtwork(track.thumbnail) {
-            try? data.write(to: Library.artworkURL(for: track.videoId))
-        }
+    /// Baixa só a capa (músicas já baixadas sem capa, ou com a capa antiga não quadrada).
+    /// Retorna false se não conseguiu; a capa anterior é mantida.
+    @discardableResult
+    static func saveArtwork(for track: RemoteTrack) async -> Bool {
+        guard let data = await fetchArtwork(track) else { return false }
+        return (try? data.write(to: Library.artworkURL(for: track.videoId))) != nil
     }
 
-    private static func fetchArtwork(_ thumbnail: String?) async -> Data? {
-        guard var s = thumbnail else { return nil }
+    /// Capa quadrada em JPEG. Músicas oficiais já vêm com capa quadrada; vídeos (clipes,
+    /// "ao vivo") vêm com a miniatura do vídeo, que é recortada no centro.
+    private static func fetchArtwork(_ track: RemoteTrack) async -> Data? {
+        for url in artworkCandidates(track) {
+            guard let result = try? await URLSession.shared.data(from: url),
+                  (result.1 as? HTTPURLResponse)?.statusCode == 200,
+                  let square = squareJPEG(result.0)
+            else { continue }
+            return square
+        }
+        return nil
+    }
+
+    private static func artworkCandidates(_ track: RemoteTrack) -> [URL] {
+        guard let thumb = track.thumbnail else { return [] }
+        if thumb.contains("ytimg.com") {
+            // Miniaturas maiores e sem faixas pretas, quando existem.
+            let base = "https://i.ytimg.com/vi/\(track.videoId)/"
+            return [base + "maxresdefault.jpg", base + "hq720.jpg", thumb].compactMap(URL.init(string:))
+        }
         // Capas do YouTube Music vêm pequenas (…=w60-h60…); pede uma maior.
-        s = s.replacingOccurrences(of: #"=w\d+-h\d+"#, with: "=w544-h544", options: .regularExpression)
-        guard let url = URL(string: s),
-              let result = try? await URLSession.shared.data(from: url),
-              (result.1 as? HTTPURLResponse)?.statusCode == 200
-        else { return nil }
-        return result.0
+        let big = thumb.replacingOccurrences(of: #"=w\d+-h\d+"#, with: "=w544-h544", options: .regularExpression)
+        return [big].compactMap(URL.init(string:))
+    }
+
+    private static func squareJPEG(_ data: Data) -> Data? {
+        guard let cg = UIImage(data: data)?.cgImage else { return nil }
+        let w = CGFloat(cg.width), h = CGFloat(cg.height)
+        // hqdefault/sddefault são 4:3 com faixas pretas em cima e embaixo de um vídeo 16:9.
+        let contentHeight = abs(w / h - 4.0 / 3.0) < 0.02 ? w * 9 / 16 : h
+        let side = min(w, contentHeight)
+        let rect = CGRect(x: (w - side) / 2, y: (h - side) / 2, width: side, height: side).integral
+        guard let cropped = cg.cropping(to: rect) else { return nil }
+        return UIImage(cgImage: cropped).jpegData(compressionQuality: 0.9)
     }
 
     /// Reempacota sem recomprimir (passthrough), só adicionando os metadados.

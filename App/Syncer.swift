@@ -7,6 +7,20 @@ private struct SyncState: Codable {
     var playlists: [RemotePlaylist] = []
     var ignoredPlaylists: [String] = []     // playlists de um perfil que o usuário removeu
     var downloaded: [String] = []           // videoIds baixados pela sincronização
+    var artworkVersion = 0                  // 2 = capas quadradas
+
+    init() {}
+
+    // Campos ausentes (de versões antigas do app) viram o valor padrão em vez de
+    // invalidar o arquivo inteiro.
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        sources = try c.decodeIfPresent([Source].self, forKey: .sources) ?? []
+        playlists = try c.decodeIfPresent([RemotePlaylist].self, forKey: .playlists) ?? []
+        ignoredPlaylists = try c.decodeIfPresent([String].self, forKey: .ignoredPlaylists) ?? []
+        downloaded = try c.decodeIfPresent([String].self, forKey: .downloaded) ?? []
+        artworkVersion = try c.decodeIfPresent(Int.self, forKey: .artworkVersion) ?? 0
+    }
 }
 
 /// Botão "Atualizar playlists": relê as playlists cadastradas, baixa músicas novas
@@ -123,11 +137,18 @@ final class Syncer: ObservableObject {
         }
         let missing = wanted.filter { !isDownloaded($0) }
 
-        // Capas que faltam em músicas já baixadas.
-        let noArtwork = wanted.filter { isDownloaded($0) && !fm.fileExists(atPath: Library.artworkURL(for: $0.videoId).path) }
+        // Capas que faltam em músicas já baixadas (ou todas, uma vez, para trocar pelas quadradas).
+        let redoAll = state.artworkVersion < 2
+        let noArtwork = wanted.filter {
+            isDownloaded($0) && (redoAll || !fm.fileExists(atPath: Library.artworkURL(for: $0.videoId).path))
+        }
         for (i, track) in noArtwork.enumerated() {
             status = "Baixando capas \(i + 1) de \(noArtwork.count)…"
-            await Downloader.saveArtwork(for: track)
+            await Downloader.saveArtwork(for: track)   // se falhar, mantém a capa anterior
+        }
+        if redoAll {
+            state.artworkVersion = 2
+            save()
         }
         if !noArtwork.isEmpty { await library.reload() }
 

@@ -5,7 +5,25 @@ import UIKit
 /// Player nativo: toca em segundo plano e com a tela bloqueada, e aparece
 /// na tela de bloqueio / Central de Controle com os controles do sistema.
 final class Player: ObservableObject {
-    enum RepeatMode { case off, all, one }
+    enum RepeatMode: String, Codable { case off, all, one }
+
+    /// Estado salvo para reabrir o app na mesma música, ponto e modos.
+    private struct SavedState: Codable {
+        var queue: [String]
+        var originalQueue: [String]
+        var index: Int
+        var time: Double
+        var isShuffled: Bool
+        var repeatMode: RepeatMode
+    }
+    private static let savedStateKey = "playerState"
+
+    /// Recebe o tempo ouvido e as reproduções (conta como "tocada" após 30 s ou metade da música).
+    var stats: Stats?
+    private var lastObservedTime: Double?
+    private var listenedThisTrack: Double = 0
+    private var countedThisTrack = false
+    private var lastStateSave = Date.distantPast
 
     @Published private(set) var queue: [Track] = []
     @Published private(set) var index = 0
@@ -34,13 +52,18 @@ final class Player: ObservableObject {
         timeObserver = player.addPeriodicTimeObserver(
             forInterval: CMTime(seconds: 0.5, preferredTimescale: 600), queue: .main
         ) { [weak self] time in
-            if time.seconds.isFinite { self?.currentTime = time.seconds }
+            guard let self, time.seconds.isFinite else { return }
+            self.currentTime = time.seconds
+            self.recordListening(at: time.seconds)
+            if Date().timeIntervalSince(self.lastStateSave) > 5 { self.saveState() }
         }
 
         statusObservation = player.observe(\.timeControlStatus) { [weak self] p, _ in
             DispatchQueue.main.async {
-                self?.isPlaying = p.timeControlStatus != .paused
-                self?.updateNowPlaying()
+                guard let self else { return }
+                self.isPlaying = p.timeControlStatus != .paused
+                self.updateNowPlaying()
+                if !self.isPlaying { self.saveState() }
             }
         }
 
@@ -50,6 +73,7 @@ final class Player: ObservableObject {
         ) { [weak self] note in
             guard let self, (note.object as? AVPlayerItem) === self.player.currentItem else { return }
             if self.repeatMode == .one {
+                self.resetListening()
                 self.seek(to: 0)
                 self.play()
             } else {
@@ -68,8 +92,75 @@ final class Player: ObservableObject {
             else { return }
             self?.play()
         })
+        notificationTokens.append(center.addObserver(
+            forName: UIApplication.willResignActiveNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            self?.saveState()
+            self?.stats?.save()
+        })
 
         configureRemoteCommands()
+    }
+
+    // MARK: - Estado salvo
+
+    /// Volta para a última música/ponto/modos, pausado. `lookup` acha a música pelo id.
+    func restore(lookup: (String) -> Track?) {
+        guard current == nil,
+              let data = UserDefaults.standard.data(forKey: Self.savedStateKey),
+              let saved = try? JSONDecoder().decode(SavedState.self, from: data)
+        else { return }
+
+        let q = saved.queue.compactMap(lookup)
+        guard !q.isEmpty else { return }
+        let currentID = saved.queue.indices.contains(saved.index) ? saved.queue[saved.index] : nil
+
+        queue = q
+        originalQueue = saved.originalQueue.compactMap(lookup)
+        if originalQueue.isEmpty { originalQueue = q }
+        isShuffled = saved.isShuffled
+        repeatMode = saved.repeatMode
+
+        let i = q.firstIndex { $0.id == currentID } ?? 0
+        load(i)
+        if q[i].id == currentID, saved.time > 0 { seek(to: saved.time) }
+    }
+
+    private func saveState() {
+        lastStateSave = Date()
+        guard current != nil else { return }
+        let saved = SavedState(
+            queue: queue.map(\.id),
+            originalQueue: originalQueue.map(\.id),
+            index: index,
+            time: currentTime,
+            isShuffled: isShuffled,
+            repeatMode: repeatMode
+        )
+        if let data = try? JSONEncoder().encode(saved) {
+            UserDefaults.standard.set(data, forKey: Self.savedStateKey)
+        }
+    }
+
+    // MARK: - Estatísticas
+
+    private func recordListening(at time: Double) {
+        defer { lastObservedTime = time }
+        guard isPlaying, let track = current, let last = lastObservedTime else { return }
+        let delta = time - last
+        guard delta > 0, delta < 2 else { return }   // ignora pulos (seek)
+        stats?.addListening(track, seconds: delta)
+        listenedThisTrack += delta
+        if !countedThisTrack, listenedThisTrack >= min(30, max(track.duration * 0.5, 1)) {
+            countedThisTrack = true
+            stats?.countPlay(track)
+        }
+    }
+
+    private func resetListening() {
+        listenedThisTrack = 0
+        countedThisTrack = false
+        lastObservedTime = nil
     }
 
     // MARK: - Controles
@@ -109,6 +200,7 @@ final class Player: ObservableObject {
             queue = originalQueue
             index = originalQueue.firstIndex(of: cur) ?? 0
         }
+        saveState()
     }
 
     /// Desligado → repetir fila → repetir música → desligado.
@@ -118,6 +210,7 @@ final class Player: ObservableObject {
         case .all: repeatMode = .one
         case .one: repeatMode = .off
         }
+        saveState()
     }
 
     func play() {
@@ -164,8 +257,10 @@ final class Player: ObservableObject {
     private func load(_ i: Int) {
         index = i
         currentTime = 0
+        resetListening()
         player.replaceCurrentItem(with: AVPlayerItem(url: queue[i].url))
         updateNowPlaying()
+        saveState()
     }
 
     private func updateNowPlaying() {

@@ -1,8 +1,6 @@
 import SwiftUI
 import UniformTypeIdentifiers
 
-// Visual propositalmente simples por enquanto.
-
 // MARK: - Playlists (sincronizadas do YouTube Music)
 
 struct PlaylistsView: View {
@@ -11,11 +9,16 @@ struct PlaylistsView: View {
     @State private var addingLink = false
     @State private var linkText = ""
     @State private var pendingRemoval: RemotePlaylist?
+    @State private var query = ""
+
+    private var visiblePlaylists: [RemotePlaylist] {
+        query.isEmpty ? syncer.playlists : syncer.playlists.filter { $0.title.localizedStandardContains(query) }
+    }
 
     var body: some View {
         NavigationStack {
             List {
-                if let status = syncer.status {
+                if let status = syncer.status, query.isEmpty {
                     Section {
                         HStack(spacing: 10) {
                             if syncer.isSyncing { ProgressView() }
@@ -24,7 +27,7 @@ struct PlaylistsView: View {
                     }
                 }
                 Section {
-                    ForEach(syncer.playlists) { playlist in
+                    ForEach(visiblePlaylists) { playlist in
                         NavigationLink(value: playlist.id) {
                             PlaylistRow(playlist: playlist)
                         }
@@ -40,6 +43,7 @@ struct PlaylistsView: View {
                 }
             }
             .miniPlayerSpacing()
+            .searchable(text: $query, prompt: "Buscar playlists")
             .confirmationDialog(
                 "Remover “\(pendingRemoval?.title ?? "")”?",
                 isPresented: Binding(get: { pendingRemoval != nil }, set: { if !$0 { pendingRemoval = nil } }),
@@ -120,11 +124,15 @@ struct PlaylistDetailView: View {
     @EnvironmentObject var library: Library
     @EnvironmentObject var player: Player
     let playlistID: String
+    @State private var query = ""
 
     var body: some View {
         if let playlist = syncer.playlists.first(where: { $0.id == playlistID }) {
             let playable = playlist.tracks.compactMap { library.track(videoID: $0.videoId) }
-            List(Array(playlist.tracks.enumerated()), id: \.offset) { item in
+            let visible = query.isEmpty ? playlist.tracks : playlist.tracks.filter {
+                $0.title.localizedStandardContains(query) || $0.artist.localizedStandardContains(query)
+            }
+            List(Array(visible.enumerated()), id: \.offset) { item in
                 let remote = item.element
                 if let local = library.track(videoID: remote.videoId) {
                     Button {
@@ -148,6 +156,7 @@ struct PlaylistDetailView: View {
             }
             .listStyle(.plain)
             .miniPlayerSpacing()
+            .searchable(text: $query, prompt: "Buscar nesta playlist")
             .navigationTitle(playlist.title)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -172,6 +181,13 @@ struct LibraryView: View {
     @EnvironmentObject var syncer: Syncer
     @State private var importing = false
     @State private var pendingRemoval: Track?
+    @State private var query = ""
+
+    private var visibleTracks: [Track] {
+        query.isEmpty ? library.tracks : library.tracks.filter { t in
+            [t.title, t.artist, t.album].contains { $0.localizedStandardContains(query) }
+        }
+    }
 
     var body: some View {
         NavigationStack {
@@ -204,9 +220,9 @@ struct LibraryView: View {
 
     private var trackList: some View {
         List {
-            ForEach(Array(library.tracks.enumerated()), id: \.element.id) { i, track in
+            ForEach(Array(visibleTracks.enumerated()), id: \.element.id) { i, track in
                 Button {
-                    player.play(library.tracks, startAt: i)
+                    player.play(visibleTracks, startAt: i)
                 } label: {
                     TrackRow(track: track, isCurrent: player.current == track)
                 }
@@ -222,6 +238,7 @@ struct LibraryView: View {
         }
         .listStyle(.plain)
         .miniPlayerSpacing()
+        .searchable(text: $query, prompt: "Buscar músicas, artistas, álbuns")
         .refreshable { await library.reload() }
         .confirmationDialog(
             "Apagar “\(pendingRemoval?.title ?? "")”?",
@@ -248,20 +265,22 @@ struct EmptyState: View {
     let icon: String
     let title: String
     let message: String
-    let action: (String, () -> Void)
+    let action: (String, () -> Void)?
 
     var body: some View {
         VStack(spacing: 16) {
             Image(systemName: icon)
                 .font(.system(size: 48))
-                .foregroundStyle(.secondary)
+                .foregroundStyle(Theme.accent.opacity(0.8))
             Text(title).font(.headline)
             Text(message)
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
-            Button(action.0, action: action.1)
-                .buttonStyle(.borderedProminent)
+            if let action {
+                Button(action.0, action: action.1)
+                    .buttonStyle(.borderedProminent)
+            }
         }
         .padding(32)
     }
@@ -277,7 +296,7 @@ struct TrackRow: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text(track.title)
                     .font(.body)
-                    .foregroundStyle(isCurrent ? Color.accentColor : .primary)
+                    .foregroundStyle(isCurrent ? Theme.accent : .primary)
                     .lineLimit(1)
                 Text(track.artist)
                     .font(.subheadline)
@@ -287,7 +306,7 @@ struct TrackRow: View {
             Spacer()
             if isCurrent {
                 Image(systemName: "speaker.wave.2.fill")
-                    .foregroundStyle(Color.accentColor)
+                    .foregroundStyle(Theme.accent)
             }
         }
         .contentShape(Rectangle())
@@ -382,6 +401,15 @@ struct MiniPlayer: View {
             .padding(.horizontal, 16)
             .frame(height: miniPlayerHeight)
             .background(.bar)
+            .overlay(alignment: .top) {
+                GeometryReader { geo in
+                    let progress = track.duration > 0 ? min(player.currentTime / track.duration, 1) : 0
+                    Rectangle()
+                        .fill(Theme.accent)
+                        .frame(width: geo.size.width * progress, height: 2)
+                }
+                .frame(height: 2)
+            }
             .contentShape(Rectangle())
             .onTapGesture(perform: onOpen)
         }
@@ -391,65 +419,91 @@ struct MiniPlayer: View {
 struct NowPlayingView: View {
     @EnvironmentObject var player: Player
     @State private var scrub: Double?
+    @State private var tint: Color = Theme.background
 
     var body: some View {
-        if let track = player.current {
-            VStack(spacing: 24) {
-                Spacer()
-                Artwork(image: track.artwork, size: 300)
-                    .shadow(radius: 20)
-                VStack(spacing: 4) {
-                    Text(track.title).font(.title2.bold()).lineLimit(2).multilineTextAlignment(.center)
-                    Text(track.artist).font(.title3).foregroundStyle(.secondary).lineLimit(1)
+        ZStack {
+            // Fundo na cor da capa, escurecendo para baixo.
+            LinearGradient(colors: [tint, Theme.background], startPoint: .top, endPoint: .bottom)
+                .ignoresSafeArea()
+                .animation(.easeInOut(duration: 0.6), value: tint)
+            if let track = player.current {
+                GeometryReader { geo in
+                    content(track, artworkSide: min(geo.size.width - 64, 380))
+                        .frame(width: geo.size.width, height: geo.size.height)
                 }
-                VStack(spacing: 4) {
-                    Slider(
-                        value: Binding(get: { scrub ?? player.currentTime }, set: { scrub = $0 }),
-                        in: 0...max(track.duration, 1),
-                        onEditingChanged: { editing in
-                            if !editing, let s = scrub {
-                                player.seek(to: s)
-                                scrub = nil
-                            }
-                        }
-                    )
-                    HStack {
-                        Text(formatTime(scrub ?? player.currentTime))
-                        Spacer()
-                        Text(formatTime(track.duration))
-                    }
-                    .font(.caption.monospacedDigit())
-                    .foregroundStyle(.secondary)
-                }
-                HStack(spacing: 48) {
-                    Button { player.previous() } label: { Image(systemName: "backward.fill") }
-                    Button { player.toggle() } label: {
-                        Image(systemName: player.isPlaying ? "pause.circle.fill" : "play.circle.fill")
-                            .font(.system(size: 72))
-                    }
-                    Button { player.next() } label: { Image(systemName: "forward.fill") }
-                }
-                .font(.title)
-                .foregroundStyle(.primary)
-                HStack {
-                    Button { player.toggleShuffle() } label: {
-                        Image(systemName: "shuffle")
-                    }
-                    .foregroundStyle(player.isShuffled ? Color.accentColor : Color.secondary)
-                    .accessibilityLabel(player.isShuffled ? "Aleatório ligado" : "Aleatório desligado")
-                    Spacer()
-                    Button { player.cycleRepeat() } label: {
-                        Image(systemName: player.repeatMode == .one ? "repeat.1" : "repeat")
-                    }
-                    .foregroundStyle(player.repeatMode == .off ? Color.secondary : Color.accentColor)
-                    .accessibilityLabel(repeatLabel)
-                }
-                .font(.title3)
-                .padding(.horizontal, 24)
-                Spacer()
             }
-            .padding(.horizontal, 32)
-            .presentationDragIndicator(.visible)
+        }
+        .task(id: player.current?.id) {
+            tint = player.current?.artwork?.themeTint.map { Color(uiColor: $0) } ?? Theme.background
+        }
+        .environment(\.colorScheme, .dark)
+        .presentationDragIndicator(.visible)
+    }
+
+    private func content(_ track: Track, artworkSide: CGFloat) -> some View {
+        VStack(spacing: 28) {
+            Spacer(minLength: 8)
+            Artwork(image: track.artwork, size: artworkSide)
+                .scaleEffect(player.isPlaying ? 1 : 0.86)
+                .shadow(color: .black.opacity(0.45), radius: 24, y: 14)
+                .animation(.spring(response: 0.45, dampingFraction: 0.7), value: player.isPlaying)
+            VStack(alignment: .leading, spacing: 4) {
+                Text(track.title).font(.title2.bold()).lineLimit(1)
+                Text(track.artist).font(.title3).foregroundStyle(Theme.secondaryText).lineLimit(1)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            controls(track)
+            Spacer(minLength: 8)
+        }
+        .padding(.horizontal, 32)
+        .foregroundStyle(.white)
+    }
+
+    private func controls(_ track: Track) -> some View {
+        VStack(spacing: 28) {
+            VStack(spacing: 4) {
+                Slider(
+                    value: Binding(get: { scrub ?? player.currentTime }, set: { scrub = $0 }),
+                    in: 0...max(track.duration, 1),
+                    onEditingChanged: { editing in
+                        if !editing, let s = scrub {
+                            player.seek(to: s)
+                            scrub = nil
+                        }
+                    }
+                )
+                .tint(.white)
+                HStack {
+                    Text(formatTime(scrub ?? player.currentTime))
+                    Spacer()
+                    Text("-" + formatTime(max(track.duration - (scrub ?? player.currentTime), 0)))
+                }
+                .font(.caption.monospacedDigit())
+                .foregroundStyle(Theme.secondaryText)
+            }
+            HStack {
+                Button { player.toggleShuffle() } label: { Image(systemName: "shuffle") }
+                    .foregroundStyle(player.isShuffled ? Theme.accent : Theme.secondaryText)
+                    .accessibilityLabel(player.isShuffled ? "Aleatório ligado" : "Aleatório desligado")
+                Spacer()
+                Button { player.previous() } label: { Image(systemName: "backward.fill").font(.title) }
+                Spacer()
+                Button { player.toggle() } label: {
+                    Image(systemName: player.isPlaying ? "pause.circle.fill" : "play.circle.fill")
+                        .font(.system(size: 76))
+                        .symbolRenderingMode(.hierarchical)
+                }
+                Spacer()
+                Button { player.next() } label: { Image(systemName: "forward.fill").font(.title) }
+                Spacer()
+                Button { player.cycleRepeat() } label: {
+                    Image(systemName: player.repeatMode == .one ? "repeat.1" : "repeat")
+                }
+                .foregroundStyle(player.repeatMode == .off ? Theme.secondaryText : Theme.accent)
+                .accessibilityLabel(repeatLabel)
+            }
+            .font(.title3)
         }
     }
 

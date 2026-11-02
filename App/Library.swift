@@ -45,6 +45,8 @@ final class Library: ObservableObject {
     /// Música baixada pela sincronização (arquivo "<videoId>.m4a").
     func track(videoID: String) -> Track? { byFile[Syncer.fileName(for: videoID)] }
 
+    func track(id: String) -> Track? { byFile[id] }
+
     static let folder: URL = {
         let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
         let dir = docs.appendingPathComponent("Music", isDirectory: true)
@@ -132,8 +134,9 @@ final class Library: ObservableObject {
             if !remote.title.isEmpty { title = remote.title }
             if !remote.artist.isEmpty { artist = remote.artist }
             if album.isEmpty { album = remote.album }
-            if artwork == nil, let data = try? Data(contentsOf: artworkURL(for: remote.videoId)) {
-                artwork = UIImage(data: data)
+            // A capa guardada à parte é a versão quadrada; tem prioridade sobre a das tags.
+            if let data = try? Data(contentsOf: artworkURL(for: remote.videoId)), let image = UIImage(data: data) {
+                artwork = image
             }
         }
         return Track(id: url.lastPathComponent, url: url, title: title, artist: artist,

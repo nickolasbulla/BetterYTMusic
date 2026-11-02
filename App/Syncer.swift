@@ -57,15 +57,13 @@ final class Syncer: ObservableObject {
         return true
     }
 
-    func removePlaylists(at offsets: IndexSet, library: Library) {
-        for p in offsets.map({ playlists[$0] }) {
-            if p.source.kind == .playlist {
-                state.sources.removeAll { $0 == p.source }
-            } else {
-                state.ignoredPlaylists.append(p.id)
-            }
-            state.playlists.removeAll { $0.id == p.id }
+    func removePlaylist(_ p: RemotePlaylist, library: Library) {
+        if p.source.kind == .playlist {
+            state.sources.removeAll { $0 == p.source }
+        } else {
+            state.ignoredPlaylists.append(p.id)
         }
+        state.playlists.removeAll { $0.id == p.id }
         playlists = state.playlists
         removeOrphans(library: library)
         save()

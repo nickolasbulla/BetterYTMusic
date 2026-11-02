@@ -11,7 +11,7 @@ Na aba **Playlists**, toque em **+** e cole:
 - o link de uma playlist **pública ou não listada** (Compartilhar → Copiar link no app oficial); ou
 - o link do seu perfil / `@nome`: o app acha sozinho todas as playlists **públicas** dele, inclusive as novas.
 
-O botão **Atualizar playlists** (canto superior esquerdo) relê tudo, baixa as músicas novas e apaga as que saíram de todas as playlists. Músicas importadas à mão nunca são apagadas. Deslizar uma playlist para a esquerda a remove do app.
+O botão **Atualizar playlists** (canto superior esquerdo) relê tudo, baixa as músicas novas e apaga as que saíram de todas as playlists. Músicas importadas à mão nunca são apagadas. Para remover uma playlist do app, toque e segure nela → **Remover playlist** e confirme.
 
 Os downloads continuam enquanto o app está aberto ou tocando música em segundo plano. Para a primeira sincronização, deixe o app aberto (a tela não apaga sozinha durante os downloads).
 

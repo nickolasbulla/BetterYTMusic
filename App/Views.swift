@@ -10,6 +10,7 @@ struct PlaylistsView: View {
     @EnvironmentObject var library: Library
     @State private var addingLink = false
     @State private var linkText = ""
+    @State private var pendingRemoval: RemotePlaylist?
 
     var body: some View {
         NavigationStack {
@@ -27,9 +28,28 @@ struct PlaylistsView: View {
                         NavigationLink(value: playlist.id) {
                             PlaylistRow(playlist: playlist)
                         }
+                        // Remover só pelo toque longo + confirmação (arrastar apagava sem querer).
+                        .contextMenu {
+                            Button(role: .destructive) {
+                                pendingRemoval = playlist
+                            } label: {
+                                Label("Remover playlist", systemImage: "trash")
+                            }
+                        }
                     }
-                    .onDelete { syncer.removePlaylists(at: $0, library: library) }
                 }
+            }
+            .confirmationDialog(
+                "Remover “\(pendingRemoval?.title ?? "")”?",
+                isPresented: Binding(get: { pendingRemoval != nil }, set: { if !$0 { pendingRemoval = nil } }),
+                titleVisibility: .visible,
+                presenting: pendingRemoval
+            ) { playlist in
+                Button("Remover", role: .destructive) {
+                    syncer.removePlaylist(playlist, library: library)
+                }
+            } message: { _ in
+                Text("As músicas baixadas dela que não estão em outra playlist serão apagadas do iPhone. Você pode adicionar o link de novo depois.")
             }
             .overlay {
                 if syncer.playlists.isEmpty && !syncer.isSyncing {

@@ -39,6 +39,7 @@ struct PlaylistsView: View {
                     }
                 }
             }
+            .miniPlayerSpacing()
             .confirmationDialog(
                 "Remover “\(pendingRemoval?.title ?? "")”?",
                 isPresented: Binding(get: { pendingRemoval != nil }, set: { if !$0 { pendingRemoval = nil } }),
@@ -220,6 +221,7 @@ struct LibraryView: View {
             }
         }
         .listStyle(.plain)
+        .miniPlayerSpacing()
         .refreshable { await library.reload() }
         .confirmationDialog(
             "Apagar “\(pendingRemoval?.title ?? "")”?",
@@ -320,8 +322,8 @@ extension View {
     /// Mini player fixo embaixo, que abre a tela "tocando agora".
     func miniPlayer() -> some View { modifier(MiniPlayerInset()) }
 
-    /// Telas abertas dentro de uma navegação não herdam o espaço do mini player;
-    /// sem isso a última linha da lista fica escondida atrás dele.
+    /// As listas não herdam o espaço do mini player (ele fica por cima da NavigationStack);
+    /// sem isso a última linha fica escondida atrás dele. Use em toda lista.
     func miniPlayerSpacing() -> some View { modifier(MiniPlayerSpacing()) }
 }
 

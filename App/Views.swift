@@ -126,12 +126,13 @@ struct PlaylistDetailView: View {
                 }
             }
             .listStyle(.plain)
+            .miniPlayerSpacing()
             .navigationTitle(playlist.title)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .primaryAction) {
                     Button {
-                        player.play(playable.shuffled(), startAt: 0)
+                        player.playShuffled(playable)
                     } label: {
                         Image(systemName: "shuffle")
                     }
@@ -276,6 +277,24 @@ struct Artwork: View {
 extension View {
     /// Mini player fixo embaixo, que abre a tela "tocando agora".
     func miniPlayer() -> some View { modifier(MiniPlayerInset()) }
+
+    /// Telas abertas dentro de uma navegação não herdam o espaço do mini player;
+    /// sem isso a última linha da lista fica escondida atrás dele.
+    func miniPlayerSpacing() -> some View { modifier(MiniPlayerSpacing()) }
+}
+
+private let miniPlayerHeight: CGFloat = 64
+
+struct MiniPlayerSpacing: ViewModifier {
+    @EnvironmentObject var player: Player
+
+    func body(content: Content) -> some View {
+        content.safeAreaInset(edge: .bottom, spacing: 0) {
+            if player.current != nil {
+                Color.clear.frame(height: miniPlayerHeight)
+            }
+        }
+    }
 }
 
 struct MiniPlayerInset: ViewModifier {
@@ -317,7 +336,7 @@ struct MiniPlayer: View {
             }
             .foregroundStyle(.primary)
             .padding(.horizontal, 16)
-            .padding(.vertical, 10)
+            .frame(height: miniPlayerHeight)
             .background(.bar)
             .contentShape(Rectangle())
             .onTapGesture(perform: onOpen)
@@ -368,10 +387,33 @@ struct NowPlayingView: View {
                 }
                 .font(.title)
                 .foregroundStyle(.primary)
+                HStack {
+                    Button { player.toggleShuffle() } label: {
+                        Image(systemName: "shuffle")
+                    }
+                    .foregroundStyle(player.isShuffled ? Color.accentColor : Color.secondary)
+                    .accessibilityLabel(player.isShuffled ? "Aleatório ligado" : "Aleatório desligado")
+                    Spacer()
+                    Button { player.cycleRepeat() } label: {
+                        Image(systemName: player.repeatMode == .one ? "repeat.1" : "repeat")
+                    }
+                    .foregroundStyle(player.repeatMode == .off ? Color.secondary : Color.accentColor)
+                    .accessibilityLabel(repeatLabel)
+                }
+                .font(.title3)
+                .padding(.horizontal, 24)
                 Spacer()
             }
             .padding(.horizontal, 32)
             .presentationDragIndicator(.visible)
+        }
+    }
+
+    private var repeatLabel: String {
+        switch player.repeatMode {
+        case .off: return "Repetir desligado"
+        case .all: return "Repetir playlist"
+        case .one: return "Repetir música"
         }
     }
 }

@@ -5,10 +5,17 @@ import UIKit
 /// Player nativo: toca em segundo plano e com a tela bloqueada, e aparece
 /// na tela de bloqueio / Central de Controle com os controles do sistema.
 final class Player: ObservableObject {
+    enum RepeatMode { case off, all, one }
+
     @Published private(set) var queue: [Track] = []
     @Published private(set) var index = 0
     @Published private(set) var isPlaying = false
     @Published private(set) var currentTime: Double = 0
+    @Published private(set) var isShuffled = false
+    @Published private(set) var repeatMode: RepeatMode = .off
+
+    /// Fila na ordem original, para desligar o aleatório sem perder a ordem.
+    private var originalQueue: [Track] = []
 
     var current: Track? { queue.indices.contains(index) ? queue[index] : nil }
 
@@ -42,7 +49,12 @@ final class Player: ObservableObject {
             forName: .AVPlayerItemDidPlayToEndTime, object: nil, queue: .main
         ) { [weak self] note in
             guard let self, (note.object as? AVPlayerItem) === self.player.currentItem else { return }
-            self.next()
+            if self.repeatMode == .one {
+                self.seek(to: 0)
+                self.play()
+            } else {
+                self.next()
+            }
         })
         // Retoma depois de uma ligação, Siri etc.
         notificationTokens.append(center.addObserver(
@@ -64,9 +76,48 @@ final class Player: ObservableObject {
 
     func play(_ tracks: [Track], startAt i: Int) {
         guard tracks.indices.contains(i) else { return }
-        queue = tracks
-        load(i)
+        originalQueue = tracks
+        if isShuffled {
+            var rest = tracks
+            let first = rest.remove(at: i)
+            queue = [first] + rest.shuffled()
+            load(0)
+        } else {
+            queue = tracks
+            load(i)
+        }
         play()
+    }
+
+    /// Liga o aleatório e começa por uma música qualquer da lista.
+    func playShuffled(_ tracks: [Track]) {
+        guard !tracks.isEmpty else { return }
+        isShuffled = true
+        play(tracks, startAt: Int.random(in: tracks.indices))
+    }
+
+    /// Embaralha (ou desembaralha) a fila atual sem interromper a música que está tocando.
+    func toggleShuffle() {
+        isShuffled.toggle()
+        guard let cur = current else { return }
+        if isShuffled {
+            var rest = originalQueue
+            if let i = rest.firstIndex(of: cur) { rest.remove(at: i) }
+            queue = [cur] + rest.shuffled()
+            index = 0
+        } else {
+            queue = originalQueue
+            index = originalQueue.firstIndex(of: cur) ?? 0
+        }
+    }
+
+    /// Desligado → repetir fila → repetir música → desligado.
+    func cycleRepeat() {
+        switch repeatMode {
+        case .off: repeatMode = .all
+        case .all: repeatMode = .one
+        case .one: repeatMode = .off
+        }
     }
 
     func play() {
@@ -83,6 +134,9 @@ final class Player: ObservableObject {
         guard !queue.isEmpty else { return }
         if index + 1 < queue.count {
             load(index + 1)
+            play()
+        } else if repeatMode != .off {
+            load(0)
             play()
         } else {
             pause()

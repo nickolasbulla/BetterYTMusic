@@ -45,9 +45,38 @@ final class Suggester: ObservableObject {
                 if info[t.videoId] == nil { info[t.videoId] = t }
             }
         }
-        results[id] = score.sorted { $0.value > $1.value }
+        let list = score.sorted { $0.value > $1.value }
             .prefix(Self.resultCount)
             .compactMap { info[$0.key] }
+        results[id] = list
+        prefetch(list.prefix(Self.prefetchCount).map(\.videoId))
+    }
+
+    // MARK: - Links de áudio
+
+    /// Achar o link do áudio é a parte lenta de tocar uma sugestão (1–3 s), então os das
+    /// primeiras sugestões são buscados antes do toque. Os links valem algumas horas.
+    private static let prefetchCount = 6
+    private static let urlLifetime: TimeInterval = 60 * 60
+    private var audioURLs: [String: (url: URL, date: Date)] = [:]
+    private var resolving: [String: Task<URL, Error>] = [:]
+
+    private func prefetch(_ ids: [String]) {
+        for id in ids { _ = audioURLTask(id) }
+    }
+
+    private func audioURLTask(_ videoID: String) -> Task<URL, Error> {
+        if let cached = audioURLs[videoID], Date().timeIntervalSince(cached.date) < Self.urlLifetime {
+            return Task<URL, Error> { cached.url }
+        }
+        if let running = resolving[videoID] { return running }
+        let task = Task { try await Downloader.audioURL(videoId: videoID) }
+        resolving[videoID] = task
+        Task {
+            if let url = try? await task.value { audioURLs[videoID] = (url, Date()) }
+            resolving[videoID] = nil
+        }
+        return task
     }
 
     /// Tira da lista (depois do "+", ou porque foi adicionada).
@@ -60,11 +89,16 @@ final class Suggester: ObservableObject {
         guard preparing == nil else { return }
         preparing = remote.videoId
         defer { preparing = nil }
-        guard let url = try? await Downloader.audioURL(videoId: remote.videoId) else { return }
-        let artwork = await Downloader.fetchArtwork(remote).flatMap(UIImage.init(data:))
+        guard let url = try? await audioURLTask(remote.videoId).value else { return }
         let track = Track(id: "stream:" + remote.videoId, url: url, title: remote.title,
                           artist: remote.artist, album: remote.album,
-                          duration: remote.duration ?? 0, artwork: artwork)
+                          duration: remote.duration ?? 0, artwork: nil)
         player.play([track], startAt: 0)
+        preparing = nil
+
+        // A capa chega depois; não vale atrasar o começo da música por ela.
+        if let image = await Downloader.fetchArtwork(remote).flatMap(UIImage.init(data:)) {
+            player.setArtwork(image, for: track.id)
+        }
     }
 }

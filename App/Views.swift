@@ -670,7 +670,8 @@ struct NowPlayingView: View {
                 }
             }
         }
-        .task(id: player.current?.id) {
+        // Inclui a capa: nas sugestões tocadas por streaming ela chega depois da música começar.
+        .task(id: "\(player.current?.id ?? "")|\(player.current?.artwork != nil)") {
             tint = player.current?.artwork?.themeTint.map { Color(uiColor: $0) } ?? Theme.background
         }
         .environment(\.colorScheme, .dark)

@@ -247,6 +247,13 @@ final class Player: ObservableObject {
         }
     }
 
+    /// Capa que chegou depois de a música começar (sugestões tocadas por streaming).
+    func setArtwork(_ image: UIImage, for trackID: String) {
+        for i in queue.indices where queue[i].id == trackID { queue[i].artwork = image }
+        for i in originalQueue.indices where originalQueue[i].id == trackID { originalQueue[i].artwork = image }
+        updateNowPlaying()
+    }
+
     func seek(to seconds: Double) {
         player.seek(to: CMTime(seconds: seconds, preferredTimescale: 600))
         currentTime = seconds

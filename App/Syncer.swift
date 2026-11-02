@@ -144,12 +144,16 @@ final class Syncer: ObservableObject {
     /// Baixa o áudio da outra versão, mas grava como a original (nome, capa e lugar na playlist).
     func acceptSubstitute(_ s: Substitute, library: Library) async {
         substitutes.removeAll { $0.id == s.id }
+        guard !adding.contains(s.original.videoId) else { return }
         let dest = Library.folder.appendingPathComponent(Self.fileName(for: s.original.videoId))
         adding.insert(s.original.videoId)
         defer { adding.remove(s.original.videoId) }
         do {
             try await Downloader.download(s.original, audioFrom: s.candidate.videoId, to: dest)
             if !state.downloaded.contains(s.original.videoId) { state.downloaded.append(s.original.videoId) }
+            if let old = state.acceptedSubstitutes[s.original.videoId], old != s.candidate.videoId {
+                state.declinedSubstitutes.append(s.original.videoId + ">" + old)
+            }
             state.acceptedSubstitutes[s.original.videoId] = s.candidate.videoId
             save()
             await library.add(dest)

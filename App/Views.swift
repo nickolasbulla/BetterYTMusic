@@ -139,6 +139,7 @@ struct SubstituteSheet: View {
     @EnvironmentObject var suggester: Suggester
     let substitute: Substitute
     let remaining: Int
+    @State private var searching = false
 
     var body: some View {
         let c = substitute.candidate
@@ -186,6 +187,7 @@ struct SubstituteSheet: View {
                 Button("Não, procurar outra") {
                     Task { await syncer.nextSubstitute(substitute) }
                 }
+                Button("Buscar eu mesmo") { searching = true }
                 Button("Não, deixar sem baixar") { syncer.declineSubstitute(substitute) }
                 if remaining > 1 {
                     Text("Mais \(remaining - 1) para confirmar").font(.caption).foregroundStyle(.secondary)
@@ -195,6 +197,123 @@ struct SubstituteSheet: View {
         .padding(24)
         .presentationDetents([.large])
         .interactiveDismissDisabled()
+        .sheet(isPresented: $searching) {
+            VersionSearchView(original: substitute.original) {
+                // A escolhida substitui a sugestão do app.
+                syncer.declineSubstitute(substitute)
+            }
+            .environmentObject(syncer)
+            .environmentObject(library)
+            .environmentObject(player)
+            .environmentObject(suggester)
+        }
+    }
+}
+
+/// Busca no YouTube Music para o usuário escolher a versão de uma música.
+struct VersionSearchView: View {
+    @EnvironmentObject var syncer: Syncer
+    @EnvironmentObject var library: Library
+    @EnvironmentObject var player: Player
+    @EnvironmentObject var suggester: Suggester
+    @Environment(\.dismiss) private var dismiss
+    let original: RemoteTrack
+    var onPick: () -> Void = {}
+    @State private var query = ""
+    @State private var results: [RemoteTrack] = []
+    @State private var loading = false
+    @State private var failed = false
+
+    var body: some View {
+        NavigationStack {
+            List {
+                Section {
+                    if loading {
+                        HStack(spacing: 10) { ProgressView(); Text("Buscando…") }
+                    } else if failed {
+                        Text("Não deu para buscar. Confira a internet.")
+                    } else if results.isEmpty {
+                        Text("Nada encontrado. Tente outras palavras.")
+                    }
+                }
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+
+                ForEach(results, id: \.videoId) { r in
+                    HStack(spacing: 12) {
+                        Button {
+                            Task { await suggester.play(r, with: player) }
+                        } label: {
+                            HStack(spacing: 12) {
+                                RemoteArtwork(url: r.thumbnail, size: 48)
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(r.title)
+                                        .foregroundStyle(player.current?.id == "stream:" + r.videoId ? Theme.accent : .primary)
+                                        .lineLimit(1)
+                                    Text([r.artist, r.album, r.duration.map(formatTime) ?? ""]
+                                        .filter { !$0.isEmpty }.joined(separator: " · "))
+                                        .font(.subheadline).foregroundStyle(.secondary).lineLimit(1)
+                                }
+                                Spacer()
+                                if suggester.preparing == r.videoId { ProgressView() }
+                            }
+                            .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+
+                        Button("Usar") {
+                            onPick()
+                            Task {
+                                await syncer.acceptSubstitute(Substitute(original: original, candidate: r),
+                                                              library: library)
+                            }
+                            dismiss()
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .tint(Theme.accent)
+                        .controlSize(.small)
+                    }
+                }
+            }
+            .listStyle(.plain)
+            .searchable(text: $query, placement: .navigationBarDrawer(displayMode: .always))
+            .onSubmit(of: .search) { Task { await search() } }
+            .navigationTitle("Escolher versão")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancelar") { dismiss() }
+                }
+            }
+            .safeAreaInset(edge: .top) {
+                Text("Para “\(original.title)”. Toque numa música para ouvir; “Usar” baixa essa no lugar.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal)
+                    .padding(.vertical, 6)
+                    .background(.bar)
+            }
+        }
+        .task {
+            guard query.isEmpty else { return }
+            query = "\(original.title) \(original.artist)"
+            await search()
+        }
+    }
+
+    private func search() async {
+        let q = query.trimmingCharacters(in: .whitespaces)
+        guard !q.isEmpty else { return }
+        loading = true
+        failed = false
+        defer { loading = false }
+        do {
+            results = try await YTMusicAPI.searchSongs(q)
+        } catch {
+            results = []
+            failed = true
+        }
     }
 }
 
@@ -225,6 +344,7 @@ struct PlaylistDetailView: View {
     @Environment(\.openURL) private var openURL
     let playlistID: String
     @State private var query = ""
+    @State private var choosingVersion: RemoteTrack?
 
     var body: some View {
         if let playlist = syncer.playlists.first(where: { $0.id == playlistID }) {
@@ -276,6 +396,11 @@ struct PlaylistDetailView: View {
                                 }
                             }
                         }
+                        Button {
+                            choosingVersion = remote
+                        } label: {
+                            Label("Escolher versão…", systemImage: "magnifyingglass")
+                        }
                         if pendingIDs.contains(remote.videoId) {
                             Button {
                                 openURL(youTubeMusicURL(remote.videoId))
@@ -299,6 +424,16 @@ struct PlaylistDetailView: View {
             .task { await suggester.load(playlist, exclude: Set(all.map(\.videoId))) }
             .miniPlayerSpacing()
             .searchable(text: $query, prompt: "Buscar nesta playlist")
+            .sheet(isPresented: Binding(get: { choosingVersion != nil },
+                                        set: { if !$0 { choosingVersion = nil } })) {
+                if let t = choosingVersion {
+                    VersionSearchView(original: t)
+                        .environmentObject(syncer)
+                        .environmentObject(library)
+                        .environmentObject(player)
+                        .environmentObject(suggester)
+                }
+            }
             .navigationTitle(playlist.title)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {

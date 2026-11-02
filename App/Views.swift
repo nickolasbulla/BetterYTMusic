@@ -416,6 +416,50 @@ struct MiniPlayer: View {
     }
 }
 
+/// Barra de progresso: tocar em qualquer ponto pula para lá, arrastar avança/volta.
+private struct SeekBar: View {
+    let value: Double
+    let duration: Double
+    let onChange: (Double) -> Void
+    let onEnd: (Double) -> Void
+
+    @State private var dragging = false
+
+    var body: some View {
+        GeometryReader { geo in
+            let progress = min(max(value / duration, 0), 1)
+            ZStack(alignment: .leading) {
+                Capsule().fill(Color.white.opacity(0.25))
+                Capsule().fill(Color.white).frame(width: geo.size.width * progress)
+                Circle()
+                    .fill(Color.white)
+                    .frame(width: dragging ? 18 : 12, height: dragging ? 18 : 12)
+                    .offset(x: geo.size.width * progress - (dragging ? 9 : 6))
+            }
+            .frame(height: dragging ? 6 : 4)
+            .frame(maxHeight: .infinity)
+            .contentShape(Rectangle())
+            .gesture(
+                DragGesture(minimumDistance: 0)
+                    .onChanged { g in
+                        dragging = true
+                        onChange(time(at: g.location.x, width: geo.size.width))
+                    }
+                    .onEnded { g in
+                        dragging = false
+                        onEnd(time(at: g.location.x, width: geo.size.width))
+                    }
+            )
+            .animation(.easeOut(duration: 0.15), value: dragging)
+        }
+        .frame(height: 28)
+    }
+
+    private func time(at x: CGFloat, width: CGFloat) -> Double {
+        Double(min(max(x / max(width, 1), 0), 1)) * duration
+    }
+}
+
 struct NowPlayingView: View {
     @EnvironmentObject var player: Player
     @State private var scrub: Double?
@@ -463,17 +507,12 @@ struct NowPlayingView: View {
     private func controls(_ track: Track) -> some View {
         VStack(spacing: 28) {
             VStack(spacing: 4) {
-                Slider(
-                    value: Binding(get: { scrub ?? player.currentTime }, set: { scrub = $0 }),
-                    in: 0...max(track.duration, 1),
-                    onEditingChanged: { editing in
-                        if !editing, let s = scrub {
-                            player.seek(to: s)
-                            scrub = nil
-                        }
-                    }
+                SeekBar(
+                    value: scrub ?? player.currentTime,
+                    duration: max(track.duration, 1),
+                    onChange: { scrub = $0 },
+                    onEnd: { player.seek(to: $0); scrub = nil }
                 )
-                .tint(.white)
                 HStack {
                     Text(formatTime(scrub ?? player.currentTime))
                     Spacer()

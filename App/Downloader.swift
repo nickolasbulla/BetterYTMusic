@@ -18,9 +18,9 @@ enum DownloadError: LocalizedError {
 }
 
 enum Downloader {
-    /// Baixa o áudio AAC (m4a) de um vídeo e grava em `dest` com título, artista, álbum e capa.
-    static func download(_ track: RemoteTrack, to dest: URL) async throws {
-        let streams = try await YouTube(videoID: track.videoId, methods: [.local, .remote]).streams
+    /// Link direto do áudio AAC (m4a) de um vídeo. Também serve para tocar sem baixar.
+    static func audioURL(videoId: String) async throws -> URL {
+        let streams = try await YouTube(videoID: videoId, methods: [.local, .remote]).streams
         guard let stream = streams
             .filterAudioOnly()
             .filter({ $0.fileExtension == .m4a })
@@ -29,11 +29,17 @@ enum Downloader {
 
         // Vídeos com anúncio só liberam o áudio depois de alguns segundos.
         try await stream.waitUntilAvailable()
+        return stream.url
+    }
+
+    /// Baixa o áudio AAC (m4a) de um vídeo e grava em `dest` com título, artista, álbum e capa.
+    static func download(_ track: RemoteTrack, to dest: URL) async throws {
+        let url = try await audioURL(videoId: track.videoId)
 
         let fm = FileManager.default
         let raw = fm.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".m4a")
         defer { try? fm.removeItem(at: raw) }
-        try await fetchInChunks(stream.url, to: raw)
+        try await fetchInChunks(url, to: raw)
 
         let artwork = await fetchArtwork(track)
         if let artwork { try? artwork.write(to: Library.artworkURL(for: track.videoId)) }
@@ -86,7 +92,7 @@ enum Downloader {
 
     /// Capa quadrada em JPEG. Músicas oficiais já vêm com capa quadrada; vídeos (clipes,
     /// "ao vivo") vêm com a miniatura do vídeo, que é recortada no centro.
-    private static func fetchArtwork(_ track: RemoteTrack) async -> Data? {
+    static func fetchArtwork(_ track: RemoteTrack) async -> Data? {
         for url in artworkCandidates(track) {
             guard let result = try? await URLSession.shared.data(from: url),
                   (result.1 as? HTTPURLResponse)?.statusCode == 200,

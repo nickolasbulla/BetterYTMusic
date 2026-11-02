@@ -13,6 +13,8 @@ Na aba **Playlists**, toque em **+** e cole:
 
 O botão **Atualizar playlists** (canto superior esquerdo) relê tudo, baixa as músicas novas e apaga as que saíram de todas as playlists. Músicas importadas à mão nunca são apagadas. Para remover uma playlist do app, toque e segure nela → **Remover playlist** e confirme.
 
+No fim de cada playlist aparecem **Sugestões**: músicas parecidas que ainda não estão nela, montadas a partir do rádio do YouTube Music de algumas músicas da playlist (precisa de internet; ↻ gera outras). Tocar ouve por streaming; o **+** baixa a música e coloca na playlist só no app, marcada como "a adicionar". Como sem login o app não consegue alterar a playlist no YouTube, essas músicas ficam em **Playlists → A adicionar no YouTube Music**, com um atalho para abrir cada uma no app oficial e salvar na playlist. No próximo Atualizar, as que já estiverem lá saem da lista sozinhas.
+
 Os downloads continuam enquanto o app está aberto ou tocando música em segundo plano. Para a primeira sincronização, deixe o app aberto (a tela não apaga sozinha durante os downloads).
 
 O áudio vem do [YouTubeKit](https://github.com/alexeichhorn/YouTubeKit), que segue a branch `main`: quando o YouTube mudar algo e os downloads pararem, basta rodar o workflow de novo (Actions → Build IPA → Run workflow) para pegar a correção mais recente da biblioteca.

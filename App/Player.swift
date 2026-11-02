@@ -146,7 +146,8 @@ final class Player: ObservableObject {
 
     private func recordListening(at time: Double) {
         defer { lastObservedTime = time }
-        guard isPlaying, let track = current, let last = lastObservedTime else { return }
+        // Sugestões tocadas por streaming não entram nas estatísticas.
+        guard isPlaying, let track = current, track.url.isFileURL, let last = lastObservedTime else { return }
         let delta = time - last
         guard delta > 0, delta < 2 else { return }   // ignora pulos (seek)
         stats?.addListening(track, seconds: delta)

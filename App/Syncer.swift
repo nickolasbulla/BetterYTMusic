@@ -1,6 +1,13 @@
 import Foundation
 import UIKit
 
+/// Sugestão adicionada pelo app que ainda falta salvar na playlist do YouTube Music.
+/// Sai da lista sozinha quando aparece na playlist no próximo Atualizar.
+struct PendingTrack: Codable, Hashable {
+    var playlistId: String
+    var track: RemoteTrack
+}
+
 /// Estado salvo em Application Support/sync.json.
 private struct SyncState: Codable {
     var sources: [Source] = []
@@ -8,6 +15,7 @@ private struct SyncState: Codable {
     var ignoredPlaylists: [String] = []     // playlists de um perfil que o usuário removeu
     var downloaded: [String] = []           // videoIds baixados pela sincronização
     var artworkVersion = 0                  // 2 = capas quadradas
+    var pending: [PendingTrack] = []
 
     init() {}
 
@@ -20,6 +28,7 @@ private struct SyncState: Codable {
         ignoredPlaylists = try c.decodeIfPresent([String].self, forKey: .ignoredPlaylists) ?? []
         downloaded = try c.decodeIfPresent([String].self, forKey: .downloaded) ?? []
         artworkVersion = try c.decodeIfPresent(Int.self, forKey: .artworkVersion) ?? 0
+        pending = try c.decodeIfPresent([PendingTrack].self, forKey: .pending) ?? []
     }
 }
 
@@ -30,6 +39,8 @@ final class Syncer: ObservableObject {
     @Published private(set) var playlists: [RemotePlaylist] = []
     @Published private(set) var isSyncing = false
     @Published private(set) var status: String?
+    @Published private(set) var pending: [PendingTrack] = []
+    @Published private(set) var adding: Set<String> = []    // videoIds sendo baixados pelo "+"
 
     private var state: SyncState
 
@@ -47,11 +58,49 @@ final class Syncer: ObservableObject {
             state = SyncState()
         }
         playlists = state.playlists
+        pending = state.pending
     }
 
     nonisolated static func fileName(for videoId: String) -> String { "\(videoId).m4a" }
 
-    var allTracks: [RemoteTrack] { playlists.flatMap(\.tracks) }
+    var allTracks: [RemoteTrack] { playlists.flatMap(\.tracks) + pending.map(\.track) }
+
+    func pending(in playlistID: String) -> [RemoteTrack] {
+        pending.filter { $0.playlistId == playlistID }.map(\.track)
+    }
+
+    // MARK: - Sugestões adicionadas
+
+    /// Coloca a sugestão na playlist (só no app, até ser salva no YouTube Music) e baixa.
+    func addSuggestion(_ track: RemoteTrack, to playlistID: String, library: Library) async {
+        guard !state.pending.contains(where: { $0.playlistId == playlistID && $0.track.videoId == track.videoId })
+        else { return }
+        state.pending.append(PendingTrack(playlistId: playlistID, track: track))
+        pending = state.pending
+        save()
+        library.apply(remote: allTracks)
+
+        let dest = Library.folder.appendingPathComponent(Self.fileName(for: track.videoId))
+        guard !FileManager.default.fileExists(atPath: dest.path), !adding.contains(track.videoId) else { return }
+        adding.insert(track.videoId)
+        defer { adding.remove(track.videoId) }
+        do {
+            try await Downloader.download(track, to: dest)
+            if !state.downloaded.contains(track.videoId) { state.downloaded.append(track.videoId) }
+            save()
+            await library.add(dest)
+        } catch {
+            // Continua pendente; o próximo Atualizar tenta baixar de novo.
+            status = "\(track.title): \(error.localizedDescription)"
+        }
+    }
+
+    func discardPending(_ videoID: String, from playlistID: String, library: Library) {
+        state.pending.removeAll { $0.playlistId == playlistID && $0.track.videoId == videoID }
+        pending = state.pending
+        removeOrphans(library: library)
+        save()
+    }
 
     // MARK: - Links
 
@@ -79,6 +128,8 @@ final class Syncer: ObservableObject {
         }
         state.playlists.removeAll { $0.id == p.id }
         playlists = state.playlists
+        state.pending.removeAll { $0.playlistId == p.id }
+        pending = state.pending
         removeOrphans(library: library)
         save()
     }
@@ -122,20 +173,26 @@ final class Syncer: ObservableObject {
         }
         state.playlists = updated
         playlists = updated
+        // Pendentes já salvas no YouTube Music (ou cuja playlist sumiu) saem da lista.
+        state.pending.removeAll { p in
+            guard let playlist = updated.first(where: { $0.id == p.playlistId }) else { return true }
+            return playlist.tracks.contains { $0.videoId == p.track.videoId }
+        }
+        pending = state.pending
         save()
 
         // 2. Downloads
         let fm = FileManager.default
         var wanted: [RemoteTrack] = []
         var seen = Set<String>()
-        for t in updated.flatMap(\.tracks) where seen.insert(t.videoId).inserted {
+        for t in allTracks where seen.insert(t.videoId).inserted {
             wanted.append(t)
         }
         library.apply(remote: wanted)
         let isDownloaded = { (t: RemoteTrack) in
             fm.fileExists(atPath: Library.folder.appendingPathComponent(Self.fileName(for: t.videoId)).path)
         }
-        let missing = wanted.filter { !isDownloaded($0) }
+        let missing = wanted.filter { !isDownloaded($0) && !adding.contains($0.videoId) }
 
         // Capas que faltam em músicas já baixadas (ou todas, uma vez, para trocar pelas quadradas).
         let redoAll = state.artworkVersion < 2
@@ -181,7 +238,7 @@ final class Syncer: ObservableObject {
     /// Apaga músicas baixadas pela sincronização que não estão mais em nenhuma playlist.
     /// Arquivos importados manualmente nunca são apagados.
     private func removeOrphans(library: Library) {
-        let inUse = Set(state.playlists.flatMap(\.tracks).map(\.videoId))
+        let inUse = Set(allTracks.map(\.videoId))
         for id in state.downloaded where !inUse.contains(id) {
             library.removeFile(named: Self.fileName(for: id))
             try? FileManager.default.removeItem(at: Library.artworkURL(for: id))

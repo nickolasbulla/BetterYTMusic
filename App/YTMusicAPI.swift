@@ -13,6 +13,7 @@ struct RemoteTrack: Codable, Hashable {
     var artist: String
     var album: String
     var thumbnail: String?
+    var duration: Double? = nil     // só nas sugestões (rádio); nas playlists vem do arquivo
 }
 
 struct RemotePlaylist: Codable, Identifiable, Hashable {
@@ -124,6 +125,39 @@ enum YTMusicAPI {
             }
         }
         return ids
+    }
+
+    // MARK: - Rádio
+
+    /// Mix de ~50 músicas parecidas com `videoId` (o "rádio" do YouTube Music). A primeira é a própria música.
+    static func radio(videoId: String) async throws -> [RemoteTrack] {
+        let r = try await post("next", client: music,
+                               body: ["videoId": videoId, "playlistId": "RDAMVM" + videoId])
+        return JSONWalk.objects("playlistPanelVideoRenderer", in: r).compactMap { v in
+            guard let id = v["videoId"] as? String,
+                  let title = v["title"].flatMap(runsText), !title.isEmpty
+            else { return nil }
+            // longBylineText: "Artista • Álbum • Ano" ou "Artista • 1 mi de visualizações…"
+            let byline = (v["longBylineText"] as? [String: Any])?["runs"] as? [[String: Any]] ?? []
+            let album = byline.first { run in
+                JSONWalk.strings("pageType", in: run).contains("MUSIC_PAGE_TYPE_ALBUM")
+            }?["text"] as? String
+            return RemoteTrack(
+                videoId: id,
+                title: title,
+                artist: v["shortBylineText"].flatMap(runsText) ?? "",
+                album: album ?? "",
+                thumbnail: v["thumbnail"].flatMap { JSONWalk.strings("url", in: $0).last },
+                duration: v["lengthText"].flatMap(runsText).flatMap(parseDuration)
+            )
+        }
+    }
+
+    /// "3:45" / "1:02:03" → segundos.
+    private static func parseDuration(_ text: String) -> Double? {
+        let parts = text.split(separator: ":").compactMap { Double($0) }
+        guard !parts.isEmpty else { return nil }
+        return parts.reduce(0) { $0 * 60 + $1 }
     }
 
     // MARK: - Leitura das respostas

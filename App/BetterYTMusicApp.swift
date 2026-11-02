@@ -6,6 +6,7 @@ struct BetterYTMusicApp: App {
     @StateObject private var player = Player()
     @StateObject private var syncer = Syncer()
     @StateObject private var stats = Stats()
+    @StateObject private var suggester = Suggester()
 
     var body: some Scene {
         WindowGroup {
@@ -14,6 +15,7 @@ struct BetterYTMusicApp: App {
                 .environmentObject(player)
                 .environmentObject(syncer)
                 .environmentObject(stats)
+                .environmentObject(suggester)
                 .preferredColorScheme(.dark)
                 .tint(Theme.accent)
         }

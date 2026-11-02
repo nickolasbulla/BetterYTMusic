@@ -26,6 +26,17 @@ struct PlaylistsView: View {
                         }
                     }
                 }
+                if !syncer.pending.isEmpty, query.isEmpty {
+                    Section {
+                        NavigationLink {
+                            PendingView()
+                        } label: {
+                            Label("A adicionar no YouTube Music (\(syncer.pending.count))",
+                                  systemImage: "arrow.up.forward.app")
+                                .foregroundStyle(Theme.accent)
+                        }
+                    }
+                }
                 Section {
                     ForEach(visiblePlaylists) { playlist in
                         NavigationLink(value: playlist.id) {
@@ -123,38 +134,71 @@ struct PlaylistDetailView: View {
     @EnvironmentObject var syncer: Syncer
     @EnvironmentObject var library: Library
     @EnvironmentObject var player: Player
+    @EnvironmentObject var suggester: Suggester
+    @Environment(\.openURL) private var openURL
     let playlistID: String
     @State private var query = ""
 
     var body: some View {
         if let playlist = syncer.playlists.first(where: { $0.id == playlistID }) {
-            let playable = playlist.tracks.compactMap { library.track(videoID: $0.videoId) }
-            let visible = query.isEmpty ? playlist.tracks : playlist.tracks.filter {
+            let pending = syncer.pending(in: playlistID)
+            let pendingIDs = Set(pending.map(\.videoId))
+            let all = playlist.tracks + pending.filter { p in !playlist.tracks.contains { $0.videoId == p.videoId } }
+            let playable = all.compactMap { library.track(videoID: $0.videoId) }
+            let visible = query.isEmpty ? all : all.filter {
                 $0.title.localizedStandardContains(query) || $0.artist.localizedStandardContains(query)
             }
-            List(Array(visible.enumerated()), id: \.offset) { item in
-                let remote = item.element
-                if let local = library.track(videoID: remote.videoId) {
-                    Button {
-                        player.play(playable, startAt: playable.firstIndex(of: local) ?? 0)
-                    } label: {
-                        TrackRow(track: local, isCurrent: player.current == local)
-                    }
-                } else {
-                    // Ainda não baixada.
-                    HStack(spacing: 12) {
-                        Artwork(image: nil, size: 48)
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(remote.title).lineLimit(1)
-                            Text(remote.artist).font(.subheadline).lineLimit(1)
+            List {
+                ForEach(Array(visible.enumerated()), id: \.offset) { item in
+                    let remote = item.element
+                    Group {
+                        if let local = library.track(videoID: remote.videoId) {
+                            Button {
+                                player.play(playable, startAt: playable.firstIndex(of: local) ?? 0)
+                            } label: {
+                                TrackRow(track: local, isCurrent: player.current == local,
+                                         badge: pendingIDs.contains(remote.videoId) ? "a adicionar" : nil)
+                            }
+                        } else {
+                            // Ainda não baixada.
+                            HStack(spacing: 12) {
+                                Artwork(image: nil, size: 48)
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(remote.title).lineLimit(1)
+                                    Text(remote.artist).font(.subheadline).lineLimit(1)
+                                }
+                                Spacer()
+                                if syncer.adding.contains(remote.videoId) {
+                                    ProgressView()
+                                } else {
+                                    Image(systemName: "icloud.and.arrow.down")
+                                }
+                            }
+                            .foregroundStyle(.secondary)
                         }
-                        Spacer()
-                        Image(systemName: "icloud.and.arrow.down")
                     }
-                    .foregroundStyle(.secondary)
+                    .contextMenu {
+                        if pendingIDs.contains(remote.videoId) {
+                            Button {
+                                openURL(youTubeMusicURL(remote.videoId))
+                            } label: {
+                                Label("Abrir no YouTube Music", systemImage: "arrow.up.forward.app")
+                            }
+                            Button(role: .destructive) {
+                                syncer.discardPending(remote.videoId, from: playlistID, library: library)
+                            } label: {
+                                Label("Tirar da playlist", systemImage: "minus.circle")
+                            }
+                        }
+                    }
+                }
+
+                if query.isEmpty {
+                    suggestions(for: playlist, exclude: Set(all.map(\.videoId)))
                 }
             }
             .listStyle(.plain)
+            .task { await suggester.load(playlist, exclude: Set(all.map(\.videoId))) }
             .miniPlayerSpacing()
             .searchable(text: $query, prompt: "Buscar nesta playlist")
             .navigationTitle(playlist.title)
@@ -170,6 +214,127 @@ struct PlaylistDetailView: View {
                 }
             }
         }
+    }
+
+    @ViewBuilder
+    private func suggestions(for playlist: RemotePlaylist, exclude: Set<String>) -> some View {
+        let items = (suggester.results[playlist.id] ?? []).filter { !exclude.contains($0.videoId) }
+        let isLoading = suggester.loading.contains(playlist.id)
+        Section {
+            if items.isEmpty {
+                Group {
+                    if isLoading {
+                        HStack(spacing: 10) { ProgressView(); Text("Procurando músicas parecidas…") }
+                    } else if suggester.failed.contains(playlist.id) {
+                        Text("Sem conexão. As sugestões precisam de internet.")
+                    } else {
+                        Text("Nenhuma sugestão.")
+                    }
+                }
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+            }
+            ForEach(items, id: \.videoId) { s in
+                HStack(spacing: 12) {
+                    Button {
+                        Task { await suggester.play(s, with: player) }
+                    } label: {
+                        HStack(spacing: 12) {
+                            RemoteArtwork(url: s.thumbnail, size: 48)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(s.title)
+                                    .foregroundStyle(player.current?.id == "stream:" + s.videoId ? Theme.accent : .primary)
+                                    .lineLimit(1)
+                                Text(s.artist).font(.subheadline).foregroundStyle(.secondary).lineLimit(1)
+                            }
+                            Spacer()
+                            if suggester.preparing == s.videoId { ProgressView() }
+                        }
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+
+                    Button {
+                        suggester.remove(s.videoId, from: playlist.id)
+                        Task { await syncer.addSuggestion(s, to: playlist.id, library: library) }
+                    } label: {
+                        Image(systemName: "plus.circle").font(.title2)
+                    }
+                    .buttonStyle(.borderless)
+                    .foregroundStyle(Theme.accent)
+                    .accessibilityLabel("Adicionar à playlist")
+                }
+            }
+        } header: {
+            HStack {
+                Text("Sugestões")
+                Spacer()
+                Button {
+                    Task { await suggester.load(playlist, exclude: exclude, refresh: true) }
+                } label: {
+                    Image(systemName: "arrow.clockwise")
+                }
+                .disabled(isLoading)
+                .accessibilityLabel("Outras sugestões")
+            }
+        } footer: {
+            Text("Toque para ouvir (precisa de internet). O + baixa a música e coloca nesta playlist. Para ela ir também para o YouTube Music, salve por lá: veja “A adicionar no YouTube Music” em Playlists.")
+                .font(.caption)
+        }
+    }
+}
+
+/// Abre a música no app do YouTube Music (ou no site, se o app não estiver instalado).
+func youTubeMusicURL(_ videoID: String) -> URL {
+    URL(string: "https://music.youtube.com/watch?v=\(videoID)")!
+}
+
+// MARK: - A adicionar no YouTube Music
+
+/// Músicas adicionadas pelo app que faltam salvar nas playlists do YouTube Music.
+/// Ao salvar lá e tocar em Atualizar, elas saem daqui sozinhas.
+struct PendingView: View {
+    @EnvironmentObject var syncer: Syncer
+    @EnvironmentObject var library: Library
+    @Environment(\.openURL) private var openURL
+
+    var body: some View {
+        List {
+            Section {
+                Text("Abra cada música no YouTube Music, toque em ⋯ → Salvar na playlist e escolha a playlist indicada. Depois toque em Atualizar aqui no app: as que já estiverem lá saem desta lista.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            }
+            ForEach(syncer.playlists.filter { !syncer.pending(in: $0.id).isEmpty }) { playlist in
+                Section(playlist.title) {
+                    ForEach(syncer.pending(in: playlist.id), id: \.videoId) { t in
+                        Button {
+                            openURL(youTubeMusicURL(t.videoId))
+                        } label: {
+                            HStack(spacing: 12) {
+                                Artwork(image: library.track(videoID: t.videoId)?.artwork, size: 44)
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(t.title).foregroundStyle(.primary).lineLimit(1)
+                                    Text(t.artist).font(.subheadline).foregroundStyle(.secondary).lineLimit(1)
+                                }
+                                Spacer()
+                                Image(systemName: "arrow.up.forward.app").foregroundStyle(Theme.accent)
+                            }
+                        }
+                        .contextMenu {
+                            Button(role: .destructive) {
+                                syncer.discardPending(t.videoId, from: playlist.id, library: library)
+                            } label: {
+                                Label("Tirar da playlist", systemImage: "minus.circle")
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        .miniPlayerSpacing()
+        .navigationTitle("A adicionar")
+        .navigationBarTitleDisplayMode(.inline)
     }
 }
 
@@ -289,6 +454,7 @@ struct EmptyState: View {
 struct TrackRow: View {
     let track: Track
     let isCurrent: Bool
+    var badge: String? = nil
 
     var body: some View {
         HStack(spacing: 12) {
@@ -298,10 +464,20 @@ struct TrackRow: View {
                     .font(.body)
                     .foregroundStyle(isCurrent ? Theme.accent : .primary)
                     .lineLimit(1)
-                Text(track.artist)
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
+                HStack(spacing: 6) {
+                    if let badge {
+                        Text(badge)
+                            .font(.caption2.bold())
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 2)
+                            .background(Theme.accent.opacity(0.2), in: Capsule())
+                            .foregroundStyle(Theme.accent)
+                    }
+                    Text(track.artist)
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
             }
             Spacer()
             if isCurrent {
@@ -329,6 +505,22 @@ struct Artwork: View {
                         .foregroundStyle(.secondary)
                 }
             }
+        }
+        .frame(width: size, height: size)
+        .clipShape(RoundedRectangle(cornerRadius: size * 0.12))
+    }
+}
+
+/// Capa vinda da internet (sugestões), recortada em quadrado pelo scaledToFill.
+struct RemoteArtwork: View {
+    let url: String?
+    let size: CGFloat
+
+    var body: some View {
+        AsyncImage(url: url.flatMap(URL.init(string:))) { image in
+            image.resizable().scaledToFill()
+        } placeholder: {
+            Artwork(image: nil, size: size)
         }
         .frame(width: size, height: size)
         .clipShape(RoundedRectangle(cornerRadius: size * 0.12))

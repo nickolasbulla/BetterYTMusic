@@ -168,7 +168,9 @@ struct PlaylistDetailView: View {
 struct LibraryView: View {
     @EnvironmentObject var library: Library
     @EnvironmentObject var player: Player
+    @EnvironmentObject var syncer: Syncer
     @State private var importing = false
+    @State private var pendingRemoval: Track?
 
     var body: some View {
         NavigationStack {
@@ -207,14 +209,34 @@ struct LibraryView: View {
                 } label: {
                     TrackRow(track: track, isCurrent: player.current == track)
                 }
-            }
-            .onDelete { offsets in
-                let doomed = offsets.map { library.tracks[$0] }
-                doomed.forEach { library.delete($0) }
+                // Apagar só pelo toque longo + confirmação, como nas playlists.
+                .contextMenu {
+                    Button(role: .destructive) {
+                        pendingRemoval = track
+                    } label: {
+                        Label("Apagar música", systemImage: "trash")
+                    }
+                }
             }
         }
         .listStyle(.plain)
         .refreshable { await library.reload() }
+        .confirmationDialog(
+            "Apagar “\(pendingRemoval?.title ?? "")”?",
+            isPresented: Binding(get: { pendingRemoval != nil }, set: { if !$0 { pendingRemoval = nil } }),
+            titleVisibility: .visible,
+            presenting: pendingRemoval
+        ) { track in
+            Button("Apagar", role: .destructive) { library.delete(track) }
+        } message: { track in
+            Text(isSynced(track)
+                 ? "O arquivo será apagado do iPhone. Como a música está numa playlist sincronizada, ela será baixada de novo no próximo Atualizar."
+                 : "O arquivo será apagado do iPhone.")
+        }
+    }
+
+    private func isSynced(_ track: Track) -> Bool {
+        syncer.allTracks.contains { Syncer.fileName(for: $0.videoId) == track.id }
     }
 }
 

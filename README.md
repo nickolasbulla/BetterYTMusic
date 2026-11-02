@@ -44,7 +44,7 @@ Instale pelo iloader (ou Sideloadly) no PC. O bundle ID é fixo, então cada ver
 - No app, toque em **+** e escolha arquivos de áudio (mp3, m4a, aac, wav, flac...) no app Arquivos; ou
 - Copie arquivos para **Arquivos → No Meu iPhone → BetterYTM → Music**. Eles aparecem ao voltar para o app (ou puxando a lista para baixo).
 
-Para apagar uma música, deslize para a esquerda na lista.
+Para apagar uma música, toque e segure nela → **Apagar música** e confirme.
 
 ## Checklist da etapa 1
 

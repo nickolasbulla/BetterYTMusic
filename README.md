@@ -2,8 +2,20 @@
 
 Player de música pessoal para o iPhone, feito para funcionar **offline**, com interface própria.
 
-- **Etapa 1 (atual):** biblioteca local + player nativo (segundo plano, tela bloqueada, controles na tela de bloqueio).
-- **Etapa 2 (próxima):** botão "Atualizar playlists" que sincroniza playlists públicas/não listadas do YouTube Music (sem login) e baixa as músicas para ouvir offline.
+- **Etapa 1:** biblioteca local + player nativo (segundo plano, tela bloqueada, controles na tela de bloqueio).
+- **Etapa 2 (atual):** aba Playlists com botão "Atualizar playlists", que sincroniza playlists do YouTube Music (sem login) e baixa as músicas para ouvir offline.
+
+## Sincronizando playlists (sem login)
+
+Na aba **Playlists**, toque em **+** e cole:
+- o link de uma playlist **pública ou não listada** (Compartilhar → Copiar link no app oficial); ou
+- o link do seu perfil / `@nome`: o app acha sozinho todas as playlists **públicas** dele, inclusive as novas.
+
+O botão **Atualizar playlists** (canto superior esquerdo) relê tudo, baixa as músicas novas e apaga as que saíram de todas as playlists. Músicas importadas à mão nunca são apagadas. Deslizar uma playlist para a esquerda a remove do app.
+
+Os downloads continuam enquanto o app está aberto ou tocando música em segundo plano. Para a primeira sincronização, deixe o app aberto (a tela não apaga sozinha durante os downloads).
+
+O áudio vem do [YouTubeKit](https://github.com/alexeichhorn/YouTubeKit), que segue a branch `main`: quando o YouTube mudar algo e os downloads pararem, basta rodar o workflow de novo (Actions → Build IPA → Run workflow) para pegar a correção mais recente da biblioteca.
 
 ## Estrutura
 
@@ -12,7 +24,10 @@ Player de música pessoal para o iPhone, feito para funcionar **offline**, com i
 | `App/BetterYTMusicApp.swift` | Entrada do app |
 | `App/Library.swift` | Biblioteca: arquivos em `Documents/Music`, leitura de título/artista/capa |
 | `App/Player.swift` | AVPlayer, AVAudioSession `playback`, tela de bloqueio e controles remotos |
-| `App/Views.swift` | Telas (lista, mini player, "tocando agora") |
+| `App/Views.swift` | Telas (playlists, músicas, mini player, "tocando agora") |
+| `App/YTMusicAPI.swift` | Leitura anônima de playlists e perfis do YouTube Music |
+| `App/Downloader.swift` | Download do áudio m4a e gravação de título/artista/capa |
+| `App/Syncer.swift` | "Atualizar playlists": estado salvo, downloads e limpeza |
 | `project.yml` | Definição do projeto (XcodeGen). Bundle ID fixo: `com.marcao.betterytmusic` |
 | `.github/workflows/build.yml` | Compila no macOS, gera `.ipa` sem assinatura e publica num Release |
 

@@ -1,0 +1,36 @@
+name: BetterYTMusic
+options:
+  deploymentTarget:
+    iOS: "16.0"
+settings:
+  base:
+    SWIFT_VERSION: "5.0"
+    MARKETING_VERSION: "0.1.0"
+    CURRENT_PROJECT_VERSION: "1"
+targets:
+  BetterYTMusic:
+    type: application
+    platform: iOS
+    sources:
+      - path: App
+      # Pasta copiada inteira para dentro do .app (Bundle.main/Inject/...)
+      - path: Inject
+        type: folder
+        buildPhase: resources
+    settings:
+      base:
+        # Fixo: novas versões substituem a anterior no SideStore.
+        PRODUCT_BUNDLE_IDENTIFIER: com.marcao.betterytmusic
+        TARGETED_DEVICE_FAMILY: "1"
+        GENERATE_INFOPLIST_FILE: NO
+    info:
+      path: App/Info.plist
+      properties:
+        CFBundleDisplayName: BetterYTM
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        UILaunchScreen: {}
+        UIBackgroundModes: [audio]
+        UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait]
+        ITSAppUsesNonExemptEncryption: false
+    scheme: {}

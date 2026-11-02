@@ -183,6 +183,9 @@ struct SubstituteSheet: View {
                 .buttonStyle(.borderedProminent)
                 .tint(Theme.accent)
                 .controlSize(.large)
+                Button("Não, procurar outra") {
+                    Task { await syncer.nextSubstitute(substitute) }
+                }
                 Button("Não, deixar sem baixar") { syncer.declineSubstitute(substitute) }
                 if remaining > 1 {
                     Text("Mais \(remaining - 1) para confirmar").font(.caption).foregroundStyle(.secondary)
@@ -262,6 +265,17 @@ struct PlaylistDetailView: View {
                         }
                     }
                     .contextMenu {
+                        if library.track(videoID: remote.videoId) != nil {
+                            Button {
+                                Task { await syncer.redownload(remote, library: library) }
+                            } label: {
+                                if syncer.hasSubstitute(remote.videoId) {
+                                    Label("Trocar versão", systemImage: "arrow.left.arrow.right")
+                                } else {
+                                    Label("Baixar de novo", systemImage: "arrow.clockwise")
+                                }
+                            }
+                        }
                         if pendingIDs.contains(remote.videoId) {
                             Button {
                                 openURL(youTubeMusicURL(remote.videoId))

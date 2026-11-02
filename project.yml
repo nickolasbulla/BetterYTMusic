@@ -8,7 +8,7 @@ settings:
     # Versão do app (semver) e nome do release no GitHub (v0.5.0).
     # Correção: 0.5.0 → 0.5.1. Função nova: 0.5.1 → 0.6.0.
     # Sem mudar aqui, um novo build substitui o .ipa do release atual.
-    MARKETING_VERSION: "0.6.6"
+    MARKETING_VERSION: "0.6.7"
     CURRENT_PROJECT_VERSION: "1"
 packages:
   # Extrai os links de áudio do YouTube. Segue a branch main para cada build

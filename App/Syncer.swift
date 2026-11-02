@@ -26,6 +26,7 @@ private struct SyncState: Codable {
     var artworkVersion = 0                  // 2 = capas quadradas
     var pending: [PendingTrack] = []
     var declinedSubstitutes: [String] = []  // Substitute.key recusados: não pergunta de novo
+    var acceptedSubstitutes: [String: String] = [:]     // videoId original → videoId da versão usada
 
     init() {}
 
@@ -40,6 +41,7 @@ private struct SyncState: Codable {
         artworkVersion = try c.decodeIfPresent(Int.self, forKey: .artworkVersion) ?? 0
         pending = try c.decodeIfPresent([PendingTrack].self, forKey: .pending) ?? []
         declinedSubstitutes = try c.decodeIfPresent([String].self, forKey: .declinedSubstitutes) ?? []
+        acceptedSubstitutes = try c.decodeIfPresent([String: String].self, forKey: .acceptedSubstitutes) ?? [:]
     }
 }
 
@@ -148,11 +150,59 @@ final class Syncer: ObservableObject {
         do {
             try await Downloader.download(s.original, audioFrom: s.candidate.videoId, to: dest)
             if !state.downloaded.contains(s.original.videoId) { state.downloaded.append(s.original.videoId) }
+            state.acceptedSubstitutes[s.original.videoId] = s.candidate.videoId
             save()
             await library.add(dest)
             errors.removeAll { $0.hasPrefix(s.original.title + ":") }
         } catch {
             status = "\(s.original.title): \(error.localizedDescription)"
+        }
+    }
+
+    /// Apaga a música baixada e baixa de novo. Se ela veio de outra versão, essa versão
+    /// conta como recusada; se a original continuar restrita, oferece as próximas.
+    func redownload(_ track: RemoteTrack, library: Library) async {
+        guard !adding.contains(track.videoId) else { return }
+        if let used = state.acceptedSubstitutes.removeValue(forKey: track.videoId) {
+            state.declinedSubstitutes.append(track.videoId + ">" + used)
+        }
+        let name = Self.fileName(for: track.videoId)
+        library.removeFile(named: name)
+        try? FileManager.default.removeItem(at: Library.artworkURL(for: track.videoId))
+        state.downloaded.removeAll { $0 == track.videoId }
+        save()
+
+        let dest = Library.folder.appendingPathComponent(name)
+        adding.insert(track.videoId)
+        defer { adding.remove(track.videoId) }
+        do {
+            try await Downloader.download(track, to: dest)
+            state.downloaded.append(track.videoId)
+            save()
+            await library.add(dest)
+        } catch DownloadError.noStreams {
+            if let s = await findSubstitute(for: track) {
+                substitutes.removeAll { $0.id == s.id }
+                substitutes.append(s)
+            } else {
+                status = "\(track.title): nenhuma outra versão encontrada"
+            }
+        } catch {
+            status = "\(track.title): \(error.localizedDescription)"
+        }
+    }
+
+    func hasSubstitute(_ videoID: String) -> Bool { state.acceptedSubstitutes[videoID] != nil }
+
+    /// Recusa esta versão e já oferece a próxima, se houver.
+    func nextSubstitute(_ s: Substitute) async {
+        declineSubstitute(s)
+        adding.insert(s.original.videoId)
+        defer { adding.remove(s.original.videoId) }
+        if let next = await findSubstitute(for: s.original) {
+            substitutes.insert(next, at: 0)
+        } else {
+            status = "\(s.original.title): nenhuma outra versão encontrada"
         }
     }
 

@@ -1,4 +1,5 @@
 import Foundation
+import Network
 import UIKit
 
 /// Sugestões de músicas parecidas com uma playlist, montadas a partir do rádio
@@ -12,6 +13,18 @@ final class Suggester: ObservableObject {
 
     private static let seedCount = 5
     private static let resultCount = 20
+
+    /// Wi-Fi comum: pré-carrega. Dados móveis, roteador do celular ou Modo de Dados Reduzidos: não.
+    private var cheapNetwork = false
+    private let monitor = NWPathMonitor()
+
+    init() {
+        monitor.pathUpdateHandler = { [weak self] path in
+            let cheap = path.status == .satisfied && !path.isExpensive && !path.isConstrained
+            Task { @MainActor in self?.cheapNetwork = cheap }
+        }
+        monitor.start(queue: DispatchQueue(label: "network-monitor"))
+    }
 
     /// Busca uma vez por playlist (ou de novo com `refresh`). `exclude` = músicas que já estão nela.
     func load(_ playlist: RemotePlaylist, exclude: Set<String>, refresh: Bool = false) async {
@@ -49,20 +62,25 @@ final class Suggester: ObservableObject {
             .prefix(Self.resultCount)
             .compactMap { info[$0.key] }
         results[id] = list
-        prefetch(list.prefix(Self.prefetchCount).map(\.videoId))
+        if cheapNetwork { prefetch(list.map(\.videoId)) }
     }
 
     // MARK: - Links de áudio
 
-    /// Achar o link do áudio é a parte lenta de tocar uma sugestão (1–3 s), então os das
-    /// primeiras sugestões são buscados antes do toque. Os links valem algumas horas.
-    private static let prefetchCount = 6
+    /// Achar o link do áudio é a parte lenta de tocar uma sugestão (1–3 s), então no Wi-Fi
+    /// os links de todas as sugestões são buscados antes do toque. Os links valem algumas horas.
     private static let urlLifetime: TimeInterval = 60 * 60
     private var audioURLs: [String: (url: URL, date: Date)] = [:]
     private var resolving: [String: Task<URL, Error>] = [:]
 
+    /// Um de cada vez, para não disparar 20 pedidos juntos ao YouTube.
     private func prefetch(_ ids: [String]) {
-        for id in ids { _ = audioURLTask(id) }
+        Task {
+            for id in ids {
+                guard cheapNetwork else { return }      // saiu do Wi-Fi no meio
+                _ = try? await audioURLTask(id).value
+            }
+        }
     }
 
     private func audioURLTask(_ videoID: String) -> Task<URL, Error> {

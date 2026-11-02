@@ -79,11 +79,6 @@ final class Stats: ObservableObject {
         save()
     }
 
-    func reset() {
-        entries = [:]
-        save()
-    }
-
     func save() {
         lastSave = Date()
         do {

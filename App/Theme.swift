@@ -3,7 +3,7 @@ import CoreImage
 
 /// Cores do app. Mude aqui para trocar o visual inteiro.
 enum Theme {
-    static let accent = Color(red: 1.00, green: 0.33, blue: 0.42)        // coral
+    static let accent = Color(red: 0.114, green: 0.725, blue: 0.329)     // #1DB954, verde
     static let background = Color(red: 0.05, green: 0.05, blue: 0.07)    // quase preto
     static let secondaryText = Color.white.opacity(0.65)
 }

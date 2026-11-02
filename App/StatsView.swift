@@ -4,7 +4,6 @@ struct StatsView: View {
     @EnvironmentObject var stats: Stats
     @EnvironmentObject var library: Library
     @EnvironmentObject var player: Player
-    @State private var confirmingReset = false
 
     var body: some View {
         let top = stats.topTracks(25)
@@ -81,18 +80,6 @@ struct StatsView: View {
                 }
             }
             .navigationTitle("Estatísticas")
-            .toolbar {
-                if !top.isEmpty {
-                    ToolbarItem(placement: .primaryAction) {
-                        Button("Zerar") { confirmingReset = true }
-                    }
-                }
-            }
-            .confirmationDialog("Zerar estatísticas?", isPresented: $confirmingReset, titleVisibility: .visible) {
-                Button("Zerar", role: .destructive) { stats.reset() }
-            } message: {
-                Text("Todo o histórico de reproduções e tempo ouvido será apagado. As músicas não são afetadas.")
-            }
         }
         .miniPlayer()
     }

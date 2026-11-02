@@ -44,10 +44,16 @@ jobs:
           cp -R build/Build/Products/Release-iphoneos/BetterYTMusic.app Payload/
           zip -qry BetterYTMusic.ipa Payload
 
+      # Nome = data/hora de Brasília (ex.: 2026.11.02-1015). Ao contrário de "Build 9/10/11",
+      # fica em ordem mesmo quando a lista é ordenada como texto.
+      - name: Version name
+        id: version
+        run: echo "name=$(TZ=America/Sao_Paulo date +%Y.%m.%d-%H%M)" >> "$GITHUB_OUTPUT"
+
       - name: Publish release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: build-${{ github.run_number }}
-          name: Build ${{ github.run_number }}
+          tag_name: v${{ steps.version.outputs.name }}
+          name: ${{ steps.version.outputs.name }}
           files: BetterYTMusic.ipa
           make_latest: true

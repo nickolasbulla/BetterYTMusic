@@ -35,7 +35,9 @@ final class Syncer: ObservableObject {
         playlists = state.playlists
     }
 
-    static func fileName(for videoId: String) -> String { "\(videoId).m4a" }
+    nonisolated static func fileName(for videoId: String) -> String { "\(videoId).m4a" }
+
+    var allTracks: [RemoteTrack] { playlists.flatMap(\.tracks) }
 
     // MARK: - Links
 
@@ -117,9 +119,19 @@ final class Syncer: ObservableObject {
         for t in updated.flatMap(\.tracks) where seen.insert(t.videoId).inserted {
             wanted.append(t)
         }
-        let missing = wanted.filter {
-            !fm.fileExists(atPath: Library.folder.appendingPathComponent(Self.fileName(for: $0.videoId)).path)
+        library.apply(remote: wanted)
+        let isDownloaded = { (t: RemoteTrack) in
+            fm.fileExists(atPath: Library.folder.appendingPathComponent(Self.fileName(for: t.videoId)).path)
         }
+        let missing = wanted.filter { !isDownloaded($0) }
+
+        // Capas que faltam em músicas já baixadas.
+        let noArtwork = wanted.filter { isDownloaded($0) && !fm.fileExists(atPath: Library.artworkURL(for: $0.videoId).path) }
+        for (i, track) in noArtwork.enumerated() {
+            status = "Baixando capas \(i + 1) de \(noArtwork.count)…"
+            await Downloader.saveArtwork(for: track)
+        }
+        if !noArtwork.isEmpty { await library.reload() }
 
         var done = 0
         for (i, track) in missing.enumerated() {
@@ -153,6 +165,7 @@ final class Syncer: ObservableObject {
         let inUse = Set(state.playlists.flatMap(\.tracks).map(\.videoId))
         for id in state.downloaded where !inUse.contains(id) {
             library.removeFile(named: Self.fileName(for: id))
+            try? FileManager.default.removeItem(at: Library.artworkURL(for: id))
         }
         state.downloaded.removeAll { !inUse.contains($0) }
     }

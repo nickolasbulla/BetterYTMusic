@@ -35,6 +35,7 @@ enum Downloader {
         try await fetchInChunks(stream.url, to: raw)
 
         let artwork = await fetchArtwork(track.thumbnail)
+        if let artwork { try? artwork.write(to: Library.artworkURL(for: track.videoId)) }
         try? fm.removeItem(at: dest)
         do {
             try await writeTagged(raw, to: dest, track: track, artwork: artwork)
@@ -71,6 +72,13 @@ enum Downloader {
                 total = Int(range[range.index(after: slash)...])
             }
             if total == nil && data.count < chunk { break }
+        }
+    }
+
+    /// Baixa só a capa (para músicas baixadas antes de a capa ser guardada à parte).
+    static func saveArtwork(for track: RemoteTrack) async {
+        if let data = await fetchArtwork(track.thumbnail) {
+            try? data.write(to: Library.artworkURL(for: track.videoId))
         }
     }
 

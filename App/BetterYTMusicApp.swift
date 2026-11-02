@@ -19,6 +19,7 @@ struct BetterYTMusicApp: App {
 
 struct RootView: View {
     @EnvironmentObject var library: Library
+    @EnvironmentObject var syncer: Syncer
     @Environment(\.scenePhase) private var scenePhase
 
     var body: some View {
@@ -28,7 +29,10 @@ struct RootView: View {
             LibraryView()
                 .tabItem { Label("Músicas", systemImage: "music.note") }
         }
-        .task { await library.reload() }
+        .task {
+            library.apply(remote: syncer.allTracks)
+            await library.reload()
+        }
         // Arquivos copiados pelo app Arquivos aparecem ao voltar para o app.
         .onChange(of: scenePhase) { phase in
             if phase == .active { Task { await library.reload() } }

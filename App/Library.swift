@@ -22,6 +22,25 @@ final class Library: ObservableObject {
         didSet { byFile = Dictionary(tracks.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a }) }
     }
     private var byFile: [String: Track] = [:]
+    private var remoteInfo: [String: RemoteTrack] = [:]   // nome do arquivo → dados da playlist
+
+    /// Capas das músicas sincronizadas, guardadas fora do arquivo de áudio.
+    nonisolated static let artworkFolder: URL = {
+        let dir = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("Artwork", isDirectory: true)
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        return dir
+    }()
+
+    nonisolated static func artworkURL(for videoID: String) -> URL {
+        artworkFolder.appendingPathComponent("\(videoID).jpg")
+    }
+
+    /// Título/artista/capa das músicas sincronizadas vêm da playlist, não só das tags do arquivo
+    /// (gravar as tags às vezes falha e o app mostraria o ID do vídeo).
+    func apply(remote tracks: [RemoteTrack]) {
+        remoteInfo = Dictionary(tracks.map { (Syncer.fileName(for: $0.videoId), $0) }, uniquingKeysWith: { a, _ in a })
+    }
 
     /// Música baixada pela sincronização (arquivo "<videoId>.m4a").
     func track(videoID: String) -> Track? { byFile[Syncer.fileName(for: videoID)] }
@@ -39,14 +58,14 @@ final class Library: ObservableObject {
         let files = (try? FileManager.default.contentsOfDirectory(at: Self.folder, includingPropertiesForKeys: nil)) ?? []
         var result: [Track] = []
         for url in files where Self.audioExtensions.contains(url.pathExtension.lowercased()) {
-            result.append(await Self.readTrack(url))
+            result.append(await Self.readTrack(url, remote: remoteInfo[url.lastPathComponent]))
         }
         tracks = Self.sorted(result)
     }
 
     /// Adiciona (ou atualiza) um único arquivo sem reler a pasta inteira.
     func add(_ url: URL) async {
-        let track = await Self.readTrack(url)
+        let track = await Self.readTrack(url, remote: remoteInfo[url.lastPathComponent])
         tracks = Self.sorted(tracks.filter { $0.id != track.id } + [track])
     }
 
@@ -82,7 +101,7 @@ final class Library: ObservableObject {
         tracks.removeAll { $0 == track }
     }
 
-    nonisolated static func readTrack(_ url: URL) async -> Track {
+    nonisolated static func readTrack(_ url: URL, remote: RemoteTrack? = nil) async -> Track {
         let asset = AVURLAsset(url: url)
         var title = url.deletingPathExtension().lastPathComponent
         var artist = "Artista desconhecido"
@@ -108,6 +127,14 @@ final class Library: ObservableObject {
         }
         if let d = try? await asset.load(.duration), d.seconds.isFinite {
             duration = d.seconds
+        }
+        if let remote {
+            if !remote.title.isEmpty { title = remote.title }
+            if !remote.artist.isEmpty { artist = remote.artist }
+            if album.isEmpty { album = remote.album }
+            if artwork == nil, let data = try? Data(contentsOf: artworkURL(for: remote.videoId)) {
+                artwork = UIImage(data: data)
+            }
         }
         return Track(id: url.lastPathComponent, url: url, title: title, artist: artist,
                      album: album, duration: duration, artwork: artwork)

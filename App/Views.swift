@@ -24,6 +24,15 @@ struct PlaylistsView: View {
                             if syncer.isSyncing { ProgressView() }
                             Text(status).font(.footnote).foregroundStyle(.secondary)
                         }
+                        if !syncer.errors.isEmpty {
+                            DisclosureGroup("Ver erros (\(syncer.errors.count))") {
+                                ForEach(syncer.errors, id: \.self) { error in
+                                    Text(error).font(.footnote).foregroundStyle(.secondary)
+                                }
+                            }
+                            .font(.footnote)
+                            .tint(Theme.accent)
+                        }
                     }
                 }
                 if !syncer.pending.isEmpty, query.isEmpty {

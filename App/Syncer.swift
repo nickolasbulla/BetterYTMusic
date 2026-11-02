@@ -39,6 +39,7 @@ final class Syncer: ObservableObject {
     @Published private(set) var playlists: [RemotePlaylist] = []
     @Published private(set) var isSyncing = false
     @Published private(set) var status: String?
+    @Published private(set) var errors: [String] = []      // erros do último Atualizar
     @Published private(set) var pending: [PendingTrack] = []
     @Published private(set) var adding: Set<String> = []    // videoIds sendo baixados pelo "+"
 
@@ -146,6 +147,7 @@ final class Syncer: ObservableObject {
         }
 
         var errors: [String] = []
+        self.errors = []
 
         // 1. Playlists
         status = "Lendo playlists…"
@@ -229,10 +231,11 @@ final class Syncer: ObservableObject {
         save()
 
         var summary = missing.isEmpty ? "Tudo em dia." : "\(done) de \(missing.count) músicas baixadas."
-        if let first = errors.first {
-            summary += " \(errors.count) erro(s). Primeiro: \(first)"
+        if !errors.isEmpty {
+            summary += " \(errors.count) erro(s)."
         }
         status = summary
+        self.errors = errors
     }
 
     /// Apaga músicas baixadas pela sincronização que não estão mais em nenhuma playlist.

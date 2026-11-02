@@ -40,7 +40,7 @@ struct RootView: View {
         }
         .task {
             player.stats = stats
-            library.apply(remote: syncer.allTracks)
+            library.apply(remote: syncer.libraryTracks)
             await library.reload()
             // Reabre na última música, no mesmo ponto, com os mesmos modos (pausado).
             player.restore { library.track(id: $0) }

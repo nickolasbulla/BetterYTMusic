@@ -40,9 +40,9 @@ enum Downloader {
     }
 
     /// Baixa o áudio AAC (m4a) de um vídeo e grava em `dest` com título, artista, álbum e capa.
-    /// `audioFrom`: pega o áudio de outra versão da música (quando a original é restrita).
-    static func download(_ track: RemoteTrack, audioFrom sourceID: String? = nil, to dest: URL) async throws {
-        let url = try await audioURL(videoId: sourceID ?? track.videoId)
+    /// `fileID`: videoId com que a capa é guardada, quando a música entra no lugar de outra.
+    static func download(_ track: RemoteTrack, as fileID: String? = nil, to dest: URL) async throws {
+        let url = try await audioURL(videoId: track.videoId)
 
         let fm = FileManager.default
         let raw = fm.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".m4a")
@@ -50,7 +50,7 @@ enum Downloader {
         try await fetchInChunks(url, to: raw)
 
         let artwork = await fetchArtwork(track)
-        if let artwork { try? artwork.write(to: Library.artworkURL(for: track.videoId)) }
+        if let artwork { try? artwork.write(to: Library.artworkURL(for: fileID ?? track.videoId)) }
         try? fm.removeItem(at: dest)
         do {
             try await writeTagged(raw, to: dest, track: track, artwork: artwork)

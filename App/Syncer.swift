@@ -27,6 +27,7 @@ private struct SyncState: Codable {
     var pending: [PendingTrack] = []
     var declinedSubstitutes: [String] = []  // Substitute.key recusados: não pergunta de novo
     var acceptedSubstitutes: [String: String] = [:]     // videoId original → videoId da versão usada
+    var substituteInfo: [String: RemoteTrack] = [:]     // videoId original → nome/artista/capa da versão usada
 
     init() {}
 
@@ -42,6 +43,7 @@ private struct SyncState: Codable {
         pending = try c.decodeIfPresent([PendingTrack].self, forKey: .pending) ?? []
         declinedSubstitutes = try c.decodeIfPresent([String].self, forKey: .declinedSubstitutes) ?? []
         acceptedSubstitutes = try c.decodeIfPresent([String: String].self, forKey: .acceptedSubstitutes) ?? [:]
+        substituteInfo = try c.decodeIfPresent([String: RemoteTrack].self, forKey: .substituteInfo) ?? [:]
     }
 }
 
@@ -80,6 +82,18 @@ final class Syncer: ObservableObject {
 
     var allTracks: [RemoteTrack] { playlists.flatMap(\.tracks) + pending.map(\.track) }
 
+    /// O que a biblioteca mostra: músicas trocadas por outra versão aparecem com o nome,
+    /// artista e capa dessa versão (o videoId continua o da playlist, que é o nome do arquivo).
+    var libraryTracks: [RemoteTrack] { forLibrary(allTracks) }
+
+    private func forLibrary(_ tracks: [RemoteTrack]) -> [RemoteTrack] {
+        tracks.map { t in
+            guard var info = state.substituteInfo[t.videoId] else { return t }
+            info.videoId = t.videoId
+            return info
+        }
+    }
+
     func pending(in playlistID: String) -> [RemoteTrack] {
         pending.filter { $0.playlistId == playlistID }.map(\.track)
     }
@@ -93,7 +107,7 @@ final class Syncer: ObservableObject {
         state.pending.append(PendingTrack(playlistId: playlistID, track: track))
         pending = state.pending
         save()
-        library.apply(remote: allTracks)
+        library.apply(remote: libraryTracks)
 
         let dest = Library.folder.appendingPathComponent(Self.fileName(for: track.videoId))
         guard !FileManager.default.fileExists(atPath: dest.path), !adding.contains(track.videoId) else { return }
@@ -141,7 +155,7 @@ final class Syncer: ObservableObject {
             .split(separator: " ").joined(separator: " ")
     }
 
-    /// Baixa o áudio da outra versão, mas grava como a original (nome, capa e lugar na playlist).
+    /// Baixa a outra versão (áudio, nome, artista e capa) no lugar da original na playlist.
     func acceptSubstitute(_ s: Substitute, library: Library) async {
         substitutes.removeAll { $0.id == s.id }
         guard !adding.contains(s.original.videoId) else { return }
@@ -149,13 +163,15 @@ final class Syncer: ObservableObject {
         adding.insert(s.original.videoId)
         defer { adding.remove(s.original.videoId) }
         do {
-            try await Downloader.download(s.original, audioFrom: s.candidate.videoId, to: dest)
+            try await Downloader.download(s.candidate, as: s.original.videoId, to: dest)
             if !state.downloaded.contains(s.original.videoId) { state.downloaded.append(s.original.videoId) }
             if let old = state.acceptedSubstitutes[s.original.videoId], old != s.candidate.videoId {
                 state.declinedSubstitutes.append(s.original.videoId + ">" + old)
             }
             state.acceptedSubstitutes[s.original.videoId] = s.candidate.videoId
+            state.substituteInfo[s.original.videoId] = s.candidate
             save()
+            library.apply(remote: libraryTracks)
             await library.add(dest)
             errors.removeAll { $0.hasPrefix(s.original.title + ":") }
         } catch {
@@ -170,6 +186,8 @@ final class Syncer: ObservableObject {
         if let used = state.acceptedSubstitutes.removeValue(forKey: track.videoId) {
             state.declinedSubstitutes.append(track.videoId + ">" + used)
         }
+        state.substituteInfo[track.videoId] = nil
+        library.apply(remote: libraryTracks)
         let name = Self.fileName(for: track.videoId)
         library.removeFile(named: name)
         try? FileManager.default.removeItem(at: Library.artworkURL(for: track.videoId))
@@ -311,7 +329,7 @@ final class Syncer: ObservableObject {
         for t in allTracks where seen.insert(t.videoId).inserted {
             wanted.append(t)
         }
-        library.apply(remote: wanted)
+        library.apply(remote: forLibrary(wanted))
         let isDownloaded = { (t: RemoteTrack) in
             fm.fileExists(atPath: Library.folder.appendingPathComponent(Self.fileName(for: t.videoId)).path)
         }
@@ -322,7 +340,7 @@ final class Syncer: ObservableObject {
         let noArtwork = wanted.filter {
             isDownloaded($0) && (redoAll || !fm.fileExists(atPath: Library.artworkURL(for: $0.videoId).path))
         }
-        for (i, track) in noArtwork.enumerated() {
+        for (i, track) in forLibrary(noArtwork).enumerated() {
             status = "Baixando capas \(i + 1) de \(noArtwork.count)…"
             await Downloader.saveArtwork(for: track)   // se falhar, mantém a capa anterior
         }

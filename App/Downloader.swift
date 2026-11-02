@@ -4,13 +4,17 @@ import UIKit
 import YouTubeKit
 
 enum DownloadError: LocalizedError {
-    case noAudioStream
+    case noStreams
+    case noAudioOnly
+    case noM4a([String])
     case http(Int)
     case export(Error?)
 
     var errorDescription: String? {
         switch self {
-        case .noAudioStream: return "Nenhum áudio m4a disponível"
+        case .noStreams: return "O YouTube não liberou nenhum formato deste vídeo"
+        case .noAudioOnly: return "O YouTube só liberou vídeo, sem áudio separado"
+        case .noM4a(let formats): return "Sem áudio m4a (só \(formats.joined(separator: ", ")))"
         case .http(let code): return "Download falhou (HTTP \(code))"
         case .export(let e): return "Falha ao gravar o arquivo: \(e?.localizedDescription ?? "?")"
         }
@@ -21,11 +25,14 @@ enum Downloader {
     /// Link direto do áudio AAC (m4a) de um vídeo. Também serve para tocar sem baixar.
     static func audioURL(videoId: String) async throws -> URL {
         let streams = try await YouTube(videoID: videoId, methods: [.local, .remote]).streams
-        guard let stream = streams
-            .filterAudioOnly()
+        // Nada veio: vídeo bloqueado/restrito ou o YouTubeKit não conseguiu ler os links.
+        guard !streams.isEmpty else { throw DownloadError.noStreams }
+        let audio = streams.filterAudioOnly()
+        guard !audio.isEmpty else { throw DownloadError.noAudioOnly }
+        guard let stream = audio
             .filter({ $0.fileExtension == .m4a })
             .highestAudioBitrateStream()
-        else { throw DownloadError.noAudioStream }
+        else { throw DownloadError.noM4a(Set(audio.map { "\($0.fileExtension)" }).sorted()) }
 
         // Vídeos com anúncio só liberam o áudio depois de alguns segundos.
         try await stream.waitUntilAvailable()

@@ -161,17 +161,7 @@ struct SubstituteSheet: View {
                     .foregroundStyle(.secondary)
             }
             .lineLimit(2)
-            Button {
-                Task { await suggester.play(c, with: player) }
-            } label: {
-                if suggester.preparing == c.videoId {
-                    ProgressView()
-                } else {
-                    Label("Ouvir", systemImage: "play.fill")
-                }
-            }
-            .buttonStyle(.bordered)
-            .tint(Theme.accent)
+            PreviewControls(track: c)
 
             Spacer(minLength: 0)
 
@@ -183,17 +173,31 @@ struct SubstituteSheet: View {
                 }
                 .buttonStyle(.borderedProminent)
                 .tint(Theme.accent)
-                .controlSize(.large)
-                Button("Não, procurar outra") {
-                    Task { await syncer.nextSubstitute(substitute) }
+                // Os outros com o mesmo tamanho, mas sem destaque, para não tocar errado.
+                Group {
+                    Button {
+                        Task { await syncer.nextSubstitute(substitute) }
+                    } label: {
+                        Text("Não, procurar outra").frame(maxWidth: .infinity)
+                    }
+                    Button {
+                        searching = true
+                    } label: {
+                        Text("Buscar eu mesmo").frame(maxWidth: .infinity)
+                    }
+                    Button(role: .destructive) {
+                        syncer.declineSubstitute(substitute)
+                    } label: {
+                        Text("Não, deixar sem baixar").frame(maxWidth: .infinity)
+                    }
                 }
-                Button("Buscar eu mesmo") { searching = true }
-                Button("Não, deixar sem baixar") { syncer.declineSubstitute(substitute) }
+                .buttonStyle(.bordered)
                 if remaining > 1 {
                     Text("Mais \(remaining - 1) para confirmar").font(.caption).foregroundStyle(.secondary)
                 }
             }
         }
+        .controlSize(.large)
         .padding(24)
         .presentationDetents([.large])
         .interactiveDismissDisabled()
@@ -206,6 +210,55 @@ struct SubstituteSheet: View {
             .environmentObject(library)
             .environmentObject(player)
             .environmentObject(suggester)
+        }
+    }
+}
+
+/// "Ouvir" de uma música da internet; enquanto ela toca, vira play/pause + barra para pular.
+struct PreviewControls: View {
+    @EnvironmentObject var player: Player
+    @EnvironmentObject var suggester: Suggester
+    let track: RemoteTrack
+    @State private var scrub: Double?
+
+    var body: some View {
+        if let current = player.current, current.id == "stream:" + track.videoId {
+            let duration = max(current.duration > 0 ? current.duration : track.duration ?? 0, 1)
+            HStack(spacing: 12) {
+                Button { player.toggle() } label: {
+                    Image(systemName: player.isPlaying ? "pause.circle.fill" : "play.circle.fill")
+                        .font(.system(size: 40))
+                }
+                .foregroundStyle(Theme.accent)
+                VStack(spacing: 2) {
+                    SeekBar(
+                        value: scrub ?? player.currentTime,
+                        duration: duration,
+                        color: Theme.accent,
+                        onChange: { scrub = $0 },
+                        onEnd: { player.seek(to: $0); scrub = nil }
+                    )
+                    HStack {
+                        Text(formatTime(scrub ?? player.currentTime))
+                        Spacer()
+                        Text(formatTime(duration))
+                    }
+                    .font(.caption.monospacedDigit())
+                    .foregroundStyle(.secondary)
+                }
+            }
+        } else {
+            Button {
+                Task { await suggester.play(track, with: player) }
+            } label: {
+                if suggester.preparing == track.videoId {
+                    ProgressView()
+                } else {
+                    Label("Ouvir", systemImage: "play.fill")
+                }
+            }
+            .buttonStyle(.bordered)
+            .tint(Theme.accent)
         }
     }
 }
@@ -293,6 +346,17 @@ struct VersionSearchView: View {
                     .padding(.horizontal)
                     .padding(.vertical, 6)
                     .background(.bar)
+            }
+            .safeAreaInset(edge: .bottom) {
+                if let playing = results.first(where: { player.current?.id == "stream:" + $0.videoId }) {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(playing.title).font(.footnote.bold()).lineLimit(1)
+                        PreviewControls(track: playing)
+                    }
+                    .padding(.horizontal)
+                    .padding(.vertical, 8)
+                    .background(.bar)
+                }
             }
         }
         .task {
@@ -845,6 +909,7 @@ struct MiniPlayer: View {
 private struct SeekBar: View {
     let value: Double
     let duration: Double
+    var color: Color = .white
     let onChange: (Double) -> Void
     let onEnd: (Double) -> Void
 
@@ -854,10 +919,10 @@ private struct SeekBar: View {
         GeometryReader { geo in
             let progress = min(max(value / duration, 0), 1)
             ZStack(alignment: .leading) {
-                Capsule().fill(Color.white.opacity(0.25))
-                Capsule().fill(Color.white).frame(width: geo.size.width * progress)
+                Capsule().fill(color.opacity(0.25))
+                Capsule().fill(color).frame(width: geo.size.width * progress)
                 Circle()
-                    .fill(Color.white)
+                    .fill(color)
                     .frame(width: dragging ? 18 : 12, height: dragging ? 18 : 12)
                     .offset(x: geo.size.width * progress - (dragging ? 9 : 6))
             }

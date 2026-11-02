@@ -7,12 +7,20 @@ settings:
     SWIFT_VERSION: "5.0"
     MARKETING_VERSION: "0.1.0"
     CURRENT_PROJECT_VERSION: "1"
+packages:
+  # Extrai os links de áudio do YouTube. Segue a branch main para cada build
+  # pegar as correções mais recentes quando o YouTube muda algo.
+  YouTubeKit:
+    url: https://github.com/alexeichhorn/YouTubeKit
+    branch: main
 targets:
   BetterYTMusic:
     type: application
     platform: iOS
     sources:
       - path: App
+    dependencies:
+      - package: YouTubeKit
     settings:
       base:
         # Fixo: novas versões substituem a anterior no SideStore.

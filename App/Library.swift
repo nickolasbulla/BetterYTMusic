@@ -18,7 +18,13 @@ struct Track: Identifiable, Equatable {
 /// Essa pasta também aparece no app Arquivos (No Meu iPhone → BetterYTM → Music).
 @MainActor
 final class Library: ObservableObject {
-    @Published private(set) var tracks: [Track] = []
+    @Published private(set) var tracks: [Track] = [] {
+        didSet { byFile = Dictionary(tracks.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a }) }
+    }
+    private var byFile: [String: Track] = [:]
+
+    /// Música baixada pela sincronização (arquivo "<videoId>.m4a").
+    func track(videoID: String) -> Track? { byFile[Syncer.fileName(for: videoID)] }
 
     static let folder: URL = {
         let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
@@ -35,7 +41,22 @@ final class Library: ObservableObject {
         for url in files where Self.audioExtensions.contains(url.pathExtension.lowercased()) {
             result.append(await Self.readTrack(url))
         }
-        tracks = result.sorted {
+        tracks = Self.sorted(result)
+    }
+
+    /// Adiciona (ou atualiza) um único arquivo sem reler a pasta inteira.
+    func add(_ url: URL) async {
+        let track = await Self.readTrack(url)
+        tracks = Self.sorted(tracks.filter { $0.id != track.id } + [track])
+    }
+
+    func removeFile(named name: String) {
+        try? FileManager.default.removeItem(at: Self.folder.appendingPathComponent(name))
+        tracks.removeAll { $0.id == name }
+    }
+
+    private static func sorted(_ list: [Track]) -> [Track] {
+        list.sorted {
             ($0.artist.lowercased(), $0.album.lowercased(), $0.title.lowercased())
                 < ($1.artist.lowercased(), $1.album.lowercased(), $1.title.lowercased())
         }

@@ -1,19 +1,167 @@
 import SwiftUI
 import UniformTypeIdentifiers
 
-// Visual propositalmente simples: a etapa 1 serve para testar importação e reprodução.
+// Visual propositalmente simples por enquanto.
+
+// MARK: - Playlists (sincronizadas do YouTube Music)
+
+struct PlaylistsView: View {
+    @EnvironmentObject var syncer: Syncer
+    @EnvironmentObject var library: Library
+    @State private var addingLink = false
+    @State private var linkText = ""
+
+    var body: some View {
+        NavigationStack {
+            List {
+                if let status = syncer.status {
+                    Section {
+                        HStack(spacing: 10) {
+                            if syncer.isSyncing { ProgressView() }
+                            Text(status).font(.footnote).foregroundStyle(.secondary)
+                        }
+                    }
+                }
+                Section {
+                    ForEach(syncer.playlists) { playlist in
+                        NavigationLink(value: playlist.id) {
+                            PlaylistRow(playlist: playlist)
+                        }
+                    }
+                    .onDelete { syncer.removePlaylists(at: $0, library: library) }
+                }
+            }
+            .overlay {
+                if syncer.playlists.isEmpty && !syncer.isSyncing {
+                    EmptyState(
+                        icon: "music.note.list",
+                        title: "Nenhuma playlist",
+                        message: "Toque em + e cole o link de uma playlist (pública ou não listada) ou do seu perfil (@nome).",
+                        action: ("Adicionar link", { addingLink = true })
+                    )
+                }
+            }
+            .navigationTitle("Playlists")
+            .navigationDestination(for: String.self) { PlaylistDetailView(playlistID: $0) }
+            .toolbar {
+                ToolbarItem(placement: .navigationBarLeading) {
+                    Button {
+                        Task { await syncer.sync(library: library) }
+                    } label: {
+                        Label("Atualizar playlists", systemImage: "arrow.triangle.2.circlepath")
+                    }
+                    .disabled(syncer.isSyncing)
+                }
+                ToolbarItem(placement: .primaryAction) {
+                    Button { addingLink = true } label: { Image(systemName: "plus") }
+                }
+            }
+            .alert("Adicionar link", isPresented: $addingLink) {
+                TextField("https://music.youtube.com/playlist?list=…", text: $linkText)
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled()
+                Button("Adicionar") {
+                    if syncer.addLink(linkText) {
+                        Task { await syncer.sync(library: library) }
+                    }
+                    linkText = ""
+                }
+                Button("Cancelar", role: .cancel) { linkText = "" }
+            } message: {
+                Text("Link de uma playlist ou do seu perfil (@nome).")
+            }
+        }
+        .miniPlayer()
+    }
+}
+
+struct PlaylistRow: View {
+    @EnvironmentObject var library: Library
+    let playlist: RemotePlaylist
+
+    var body: some View {
+        let downloaded = playlist.tracks.filter { library.track(videoID: $0.videoId) != nil }.count
+        HStack(spacing: 12) {
+            Artwork(image: playlist.tracks.lazy.compactMap { library.track(videoID: $0.videoId)?.artwork }.first,
+                    size: 56)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(playlist.title).font(.body).lineLimit(1)
+                Text("\(playlist.tracks.count) músicas · \(downloaded) baixadas")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+            }
+        }
+    }
+}
+
+struct PlaylistDetailView: View {
+    @EnvironmentObject var syncer: Syncer
+    @EnvironmentObject var library: Library
+    @EnvironmentObject var player: Player
+    let playlistID: String
+
+    var body: some View {
+        if let playlist = syncer.playlists.first(where: { $0.id == playlistID }) {
+            let playable = playlist.tracks.compactMap { library.track(videoID: $0.videoId) }
+            List(Array(playlist.tracks.enumerated()), id: \.offset) { item in
+                let remote = item.element
+                if let local = library.track(videoID: remote.videoId) {
+                    Button {
+                        player.play(playable, startAt: playable.firstIndex(of: local) ?? 0)
+                    } label: {
+                        TrackRow(track: local, isCurrent: player.current == local)
+                    }
+                } else {
+                    // Ainda não baixada.
+                    HStack(spacing: 12) {
+                        Artwork(image: nil, size: 48)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(remote.title).lineLimit(1)
+                            Text(remote.artist).font(.subheadline).lineLimit(1)
+                        }
+                        Spacer()
+                        Image(systemName: "icloud.and.arrow.down")
+                    }
+                    .foregroundStyle(.secondary)
+                }
+            }
+            .listStyle(.plain)
+            .navigationTitle(playlist.title)
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .primaryAction) {
+                    Button {
+                        player.play(playable.shuffled(), startAt: 0)
+                    } label: {
+                        Image(systemName: "shuffle")
+                    }
+                    .disabled(playable.isEmpty)
+                }
+            }
+        }
+    }
+}
+
+// MARK: - Todas as músicas
 
 struct LibraryView: View {
     @EnvironmentObject var library: Library
     @EnvironmentObject var player: Player
-    @Environment(\.scenePhase) private var scenePhase
     @State private var importing = false
-    @State private var showingNowPlaying = false
 
     var body: some View {
         NavigationStack {
             Group {
-                if library.tracks.isEmpty { emptyState } else { trackList }
+                if library.tracks.isEmpty {
+                    EmptyState(
+                        icon: "music.note",
+                        title: "Nenhuma música ainda",
+                        message: "Atualize as playlists, toque em + para importar arquivos, ou copie para Arquivos → No Meu iPhone → BetterYTM → Music.",
+                        action: ("Importar músicas", { importing = true })
+                    )
+                } else {
+                    trackList
+                }
             }
             .navigationTitle("Músicas")
             .toolbar {
@@ -22,24 +170,11 @@ struct LibraryView: View {
                 }
             }
         }
-        .safeAreaInset(edge: .bottom) {
-            if player.current != nil {
-                MiniPlayer { showingNowPlaying = true }
-            }
-        }
+        .miniPlayer()
         .fileImporter(isPresented: $importing, allowedContentTypes: [.audio], allowsMultipleSelection: true) { result in
             if case .success(let urls) = result {
                 Task { await library.importFiles(urls) }
             }
-        }
-        .sheet(isPresented: $showingNowPlaying) {
-            NowPlayingView()
-                .environmentObject(player)
-        }
-        .task { await library.reload() }
-        // Arquivos copiados pelo app Arquivos aparecem ao voltar para o app.
-        .onChange(of: scenePhase) { phase in
-            if phase == .active { Task { await library.reload() } }
         }
     }
 
@@ -60,19 +195,27 @@ struct LibraryView: View {
         .listStyle(.plain)
         .refreshable { await library.reload() }
     }
+}
 
-    private var emptyState: some View {
+// MARK: - Componentes
+
+struct EmptyState: View {
+    let icon: String
+    let title: String
+    let message: String
+    let action: (String, () -> Void)
+
+    var body: some View {
         VStack(spacing: 16) {
-            Image(systemName: "music.note.list")
+            Image(systemName: icon)
                 .font(.system(size: 48))
                 .foregroundStyle(.secondary)
-            Text("Nenhuma música ainda")
-                .font(.headline)
-            Text("Toque em + para importar arquivos de áudio, ou copie para Arquivos → No Meu iPhone → BetterYTM → Music.")
+            Text(title).font(.headline)
+            Text(message)
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
-            Button("Importar músicas") { importing = true }
+            Button(action.0, action: action.1)
                 .buttonStyle(.borderedProminent)
         }
         .padding(32)
@@ -125,6 +268,30 @@ struct Artwork: View {
         }
         .frame(width: size, height: size)
         .clipShape(RoundedRectangle(cornerRadius: size * 0.12))
+    }
+}
+
+// MARK: - Player
+
+extension View {
+    /// Mini player fixo embaixo, que abre a tela "tocando agora".
+    func miniPlayer() -> some View { modifier(MiniPlayerInset()) }
+}
+
+struct MiniPlayerInset: ViewModifier {
+    @EnvironmentObject var player: Player
+    @State private var showingNowPlaying = false
+
+    func body(content: Content) -> some View {
+        content
+            .safeAreaInset(edge: .bottom) {
+                if player.current != nil {
+                    MiniPlayer { showingNowPlaying = true }
+                }
+            }
+            .sheet(isPresented: $showingNowPlaying) {
+                NowPlayingView().environmentObject(player)
+            }
     }
 }
 

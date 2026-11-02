@@ -1,0 +1,124 @@
+import Foundation
+import AVFoundation
+import YouTubeKit
+
+enum DownloadError: LocalizedError {
+    case noAudioStream
+    case http(Int)
+    case export(Error?)
+
+    var errorDescription: String? {
+        switch self {
+        case .noAudioStream: return "Nenhum áudio m4a disponível"
+        case .http(let code): return "Download falhou (HTTP \(code))"
+        case .export(let e): return "Falha ao gravar o arquivo: \(e?.localizedDescription ?? "?")"
+        }
+    }
+}
+
+enum Downloader {
+    /// Baixa o áudio AAC (m4a) de um vídeo e grava em `dest` com título, artista, álbum e capa.
+    static func download(_ track: RemoteTrack, to dest: URL) async throws {
+        let streams = try await YouTube(videoID: track.videoId, methods: [.local, .remote]).streams
+        guard let stream = streams
+            .filterAudioOnly()
+            .filter({ $0.fileExtension == .m4a })
+            .highestAudioBitrateStream()
+        else { throw DownloadError.noAudioStream }
+
+        // Vídeos com anúncio só liberam o áudio depois de alguns segundos.
+        try await stream.waitUntilAvailable()
+
+        let fm = FileManager.default
+        let raw = fm.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".m4a")
+        defer { try? fm.removeItem(at: raw) }
+        try await fetchInChunks(stream.url, to: raw)
+
+        let artwork = await fetchArtwork(track.thumbnail)
+        try? fm.removeItem(at: dest)
+        do {
+            try await writeTagged(raw, to: dest, track: track, artwork: artwork)
+        } catch {
+            // Sem tags é melhor que nada: a música ainda toca.
+            print("Tags não gravadas (\(track.videoId)): \(error)")
+            try fm.copyItem(at: raw, to: dest)
+        }
+    }
+
+    /// O YouTube limita downloads de uma vez só; pedir em partes evita bloqueio e lentidão.
+    private static func fetchInChunks(_ url: URL, to file: URL) async throws {
+        let chunk = 4 * 1024 * 1024
+        FileManager.default.createFile(atPath: file.path, contents: nil)
+        let handle = try FileHandle(forWritingTo: file)
+        defer { try? handle.close() }
+
+        var offset = 0
+        var total: Int?
+        while total == nil || offset < total! {
+            var req = URLRequest(url: url)
+            req.setValue("bytes=\(offset)-\(offset + chunk - 1)", forHTTPHeaderField: "Range")
+            let (data, response) = try await URLSession.shared.data(for: req)
+            let http = response as? HTTPURLResponse
+            let code = http?.statusCode ?? 0
+            guard (200...299).contains(code) else { throw DownloadError.http(code) }
+
+            try handle.write(contentsOf: data)
+            offset += data.count
+            if code == 200 || data.isEmpty { break }    // servidor mandou o arquivo inteiro
+            if total == nil,
+               let range = http?.value(forHTTPHeaderField: "Content-Range"),
+               let slash = range.lastIndex(of: "/") {
+                total = Int(range[range.index(after: slash)...])
+            }
+            if total == nil && data.count < chunk { break }
+        }
+    }
+
+    private static func fetchArtwork(_ thumbnail: String?) async -> Data? {
+        guard var s = thumbnail else { return nil }
+        // Capas do YouTube Music vêm pequenas (…=w60-h60…); pede uma maior.
+        s = s.replacingOccurrences(of: #"=w\d+-h\d+"#, with: "=w544-h544", options: .regularExpression)
+        guard let url = URL(string: s),
+              let result = try? await URLSession.shared.data(from: url),
+              (result.1 as? HTTPURLResponse)?.statusCode == 200
+        else { return nil }
+        return result.0
+    }
+
+    /// Reempacota sem recomprimir (passthrough), só adicionando os metadados.
+    private static func writeTagged(_ src: URL, to dest: URL, track: RemoteTrack, artwork: Data?) async throws {
+        guard let session = AVAssetExportSession(asset: AVURLAsset(url: src), presetName: AVAssetExportPresetPassthrough) else {
+            throw DownloadError.export(nil)
+        }
+        func item(_ id: AVMetadataIdentifier, _ value: NSCopying & NSObjectProtocol) -> AVMetadataItem {
+            let i = AVMutableMetadataItem()
+            i.identifier = id
+            i.value = value
+            i.extendedLanguageTag = "und"
+            return i
+        }
+        var metadata = [
+            item(.commonIdentifierTitle, track.title as NSString),
+            item(.commonIdentifierArtist, track.artist as NSString),
+            item(.commonIdentifierAlbumName, track.album as NSString),
+        ]
+        if let artwork {
+            let art = AVMutableMetadataItem()
+            art.identifier = .commonIdentifierArtwork
+            art.value = artwork as NSData
+            art.dataType = kCMMetadataBaseDataType_JPEG as String
+            metadata.append(art)
+        }
+
+        session.outputURL = dest
+        session.outputFileType = .m4a
+        session.metadata = metadata
+        await withCheckedContinuation { continuation in
+            session.exportAsynchronously { continuation.resume() }
+        }
+        guard session.status == .completed else {
+            try? FileManager.default.removeItem(at: dest)
+            throw DownloadError.export(session.error)
+        }
+    }
+}

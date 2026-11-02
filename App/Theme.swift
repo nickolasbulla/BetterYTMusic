@@ -4,17 +4,8 @@ import CoreImage
 /// Cores do app. Mude aqui para trocar o visual inteiro.
 enum Theme {
     static let accent = Color(red: 1.00, green: 0.33, blue: 0.42)        // coral
-    static let background = Color(red: 0.094, green: 0.098, blue: 0.118) // #18191E, cinza bem escuro
-    static let surface = Color(red: 0.141, green: 0.145, blue: 0.173)    // #24252C, linhas agrupadas
+    static let background = Color(red: 0.05, green: 0.05, blue: 0.07)    // quase preto
     static let secondaryText = Color.white.opacity(0.65)
-}
-
-extension View {
-    /// Fundo do tema no lugar do preto padrão do iOS. Use em toda tela/lista.
-    func themedBackground() -> some View {
-        scrollContentBackground(.hidden)
-            .background(Theme.background.ignoresSafeArea())
-    }
 }
 
 private let ciContext = CIContext(options: [.workingColorSpace: NSNull()])
